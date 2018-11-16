@@ -7,16 +7,16 @@ import torch.nn as nn
 
 from pathlib import Path
 
-from data_iterators import STSDataIterator
-from models import create_sts_predictor
-from utilities import my_dependencies, V
+from modules.data_iterators import STSDataIterator
+from modules.models import create_sts_predictor
+from modules.utilities import my_dependencies, V
 
 
 parser = argparse.ArgumentParser(description='PyTorch Dependency-Parse Encoding Model')
 parser.add_argument('--word_embedding_source', type=str, default='glove-wiki-gigaword-50', help='word embedding source to use')
 parser.add_argument('--embedding_dim', type=int, default=50, help='size of word embeddings used')
-parser.add_argument('--saved_models', type=str, default='./saved_models', help='directory to save/load models')
-parser.add_argument('--data_dir', type=str, default='../data', help='directory where data is stored')
+parser.add_argument('--saved_models', type=str, default='./models', help='directory to save/load models')
+parser.add_argument('--data_dir', type=str, default='./data', help='directory where data is stored')
 parser.add_argument('--batch_size', type=int, default=1, help='batch size for training')
 parser.add_argument('--num_epochs', type=int, default=50, help='number of epochs to train for')
 parser.add_argument('--model_name', type=str, default='sts_predictor', help='name of model to train')

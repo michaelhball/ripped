@@ -3,7 +3,7 @@ import pickle
 
 from pathlib import Path
 
-from utilities import randomise
+from modules.utilities import randomise
 
 
 class STSDataIterator(): # this has to be created for each dataset e.g. one each for train, dev, test

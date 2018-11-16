@@ -4,7 +4,7 @@ import pickle
 
 from pathlib import Path
 
-from utilities import randomise
+from modules.utilities import randomise
 
 
 class STSDataReader():
