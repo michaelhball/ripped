@@ -35,6 +35,11 @@ class DependencyEncoder(nn.Module):
         if self.use_bias:
             self.biases = nn.ParameterList([nn.Parameter(torch.zeros(1, self.embedding_dim)) for _ in range(self.num_params)])
         self._init_params()
+        
+        # for testing
+        self.dep_freq = {}
+        self.unseen_words = []
+        self.rare_dependencies = set()
 
     def _init_params(self):
         for param in self.params.parameters():
@@ -46,10 +51,11 @@ class DependencyEncoder(nn.Module):
     def _is_leaf(self, node):
         return False if list(node.children) else True
 
-    def _node_embedding(self, node): # this is forward propagation
-        node_text = node.text
-        if node.text not in self.we:
-            print("token <'{0}'> not in word embeddings, replaced with <unk>".format(node.text))
+    def _node_embedding(self, node):
+        node_text = node.text.lower()
+        if node_text not in self.we:
+            self.unseen_words.append(node_text)
+            # print("token <'{0}'> not in word embeddings, replaced with <unk>".format(node.text))
             node_text = 'unk'
             
         x = Variable(torch.tensor([self.we[node_text]], dtype=torch.float), requires_grad=True)
@@ -59,8 +65,18 @@ class DependencyEncoder(nn.Module):
         else:
             z_cs = []
             for c in node.children:
+                if c.dep_ not in self.dep_freq:
+                    self.dep_freq[c.dep_] = 0
+                else:
+                    self.dep_freq[c.dep_] += 1
                 if c.dep_ not in self.dependency_map:
-                    print("ignored dependency for word: <'{0}'>, dependency: <'{1}'>, parent: <'{2}'>".format(c.text, c.dep_, c.head.text))
+                    if c.dep_ not in self.rare_dependencies:
+                        self.rare_dependencies.add(c.dep_)
+                    # DO this after training, when testing, so I can see when these cases arise...
+                    # if c.dep_ not in self.rare_dependencies: # put entire Token in there so we can check out all dependencies later
+                    #     self.rare_dependencies[c.dep_] = [c]
+                    # else:
+                    #     self.rare_dependencies.append(c)
                     continue
                 dep_index = self.dependency_map[c.dep_]
                 D_c = self.params[dep_index] # dxd
@@ -81,15 +97,17 @@ class DependencyEncoder(nn.Module):
     def forward(self, input):
         root = list(self.nlp(input).sents)[0].root # spacy Token object
 
+        # should I pass the output of node_embedding through a final linear layer (& softmax or something too even?)
+
         return self._node_embedding(root)
 
 
-# if __name__ == "__main__":
-#     import gensim.downloader as api
-#     import spacy
+if __name__ == "__main__":
+    import gensim.downloader as api
+    import spacy
     
-#     we = api.load('glove-wiki-gigaword-50')
-#     nlp = spacy.load('en')
-#     enc = DependencyEncoder(nlp, we, 50, 1, DEPENDENCIES)
-#     sentence = "The young boys were playing outside"
-#     enc(sentence)
+    we = api.load('glove-wiki-gigaword-50')
+    nlp = spacy.load('en')
+    enc = DependencyEncoder(nlp, we, 50, 1, DEPENDENCIES)
+    sentence = "The young boys were playing outside."
+    enc(sentence)
