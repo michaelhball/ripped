@@ -1,1 +1,2 @@
-from sts_data_reader import STSDataReader
+from sick_data_reader import SICKDataReader
+from stsbenchmark_data_reader import STSBenchmarkDataReader

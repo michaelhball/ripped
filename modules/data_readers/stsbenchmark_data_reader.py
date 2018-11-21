@@ -7,7 +7,7 @@ from pathlib import Path
 from modules.utilities import randomise
 
 
-class STSDataReader():
+class STSBenchmarkDataReader():
     def __init__(self, train_csv, dev_csv, test_csv):
         self.train_csv, self.dev_csv, self.test_csv = train_csv, dev_csv, test_csv
         self.full_data = {"train": {}, "dev": {}, "test": {}}

@@ -28,7 +28,7 @@ class STSPredictor(nn.Module):
             l_x = l(x)
             x = F.relu(l_x)
 
-        return l_x, x # 1x1
+        return l_x#, x # 1x1
 
 
 # if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import argparse
 import gensim.downloader as api
+import pickle
 import spacy
 import time
 import torch
@@ -19,7 +20,7 @@ parser.add_argument('--embedding_dim', type=int, default=50, help='size of word 
 parser.add_argument('--saved_models', type=str, default='./models', help='directory to save/load models')
 parser.add_argument('--data_dir', type=str, default='./data', help='directory where data is stored')
 parser.add_argument('--batch_size', type=int, default=1, help='batch size for training')
-parser.add_argument('--num_epochs', type=int, default=50, help='number of epochs to train for')
+parser.add_argument('--num_epochs', type=int, default=5, help='number of epochs to train for')
 parser.add_argument('--model_name', type=str, default='sts_predictor', help='name of model to train')
 parser.add_argument('--task', type=str, default='train', help='task out of train/test/evaluate')
 args = parser.parse_args()
@@ -65,50 +66,58 @@ class STS():
     
     def _setup_model(self, batch_size):
         layers = [200, 50, 1] # totally random at this point
-        self.model = create_sts_predictor(self.nlp, self.word_embeddings, self.embedding_dim, batch_size, my_dependencies, layers)
+        drops = [0.5, 0.3] # need to test adding dropout to the model
+        # self.model = create_sts_predictor(self.nlp, self.word_embeddings, self.embedding_dim, batch_size, my_dependencies, layers)
+        self.model = create_sentence_distance_sts_predictor(self.nlp, self.word_embeddings, self.embedding_dim, batch_size, my_dependencies)
 
     def all_similarity(self):
-        # self._setup_model(1)
-        # self._load_model(self.name)
+        self._setup_model(1)
+        self._load_model(self.name)
         self.model.eval()
+        self.model.training = False
         preds, scores, info = [], [], []
-        for i, example in enumerate(iter(self.dev_di)):
+        for i, example in enumerate(iter(self.test_di)):
             s1, s2, score = str(example[0][0]), str(example[0][1]), float(example[0][2])
-            pred, relu = self.model(s1, s2)
+            pred = self.model(s1, s2)
             preds.append(pred.item())
-            scores.append(score)
+            scores.append(score/5)
             info.append((s1, s2, score, pred.item()))
         
         pearson_coefficient = pearsonr(preds, scores)
         info = sorted(info, key=lambda tup: abs(tup[2]-tup[3]), reverse=True)
         
         return pearson_coefficient, info
-
-    def similarity(self, input1, input2):
-        self._setup_model(1)
-        self._load_model(self.name)
+    
+    def average_validation_loss(self, loss_func):
         self.model.eval()
-        pred, relu = self.model(input1, input)
-
-        return pred.item()
+        self.model.training = False
+        total_loss = 0.0
+        for i, example in enumerate(iter(self.dev_di)):
+            s1, s2, score = str(example[0][0]), str(example[0][1]), float(example[0][2])
+            pred = self.model(s1, s2)
+            loss = loss_func(pred[0], (V(score)-1)/5)
+            total_loss += loss.item()
+        
+        return total_loss / self.num_dev_examples
     
     def _train(self, loss_func, opt_func, num_epochs):
-        self.model.train()
         for e in range(num_epochs):
+            self.model.train()
+            self.model.training = True
             total_loss = 0.0
             for i, example in enumerate(iter(self.train_di)):
-                s1, s2, score = str(example[0][0]), str(example[0][1]), float(example[0][2])
                 self.model.zero_grad()
-                pred, relu = self.model(s1, s2)
-                if i % 1000 == 0:
-                    pc, items = self.all_similarity()
-                    print("iteration {0}, dev pearson coefficient: {1}".format(i, pc))
-                loss = loss_func(pred[0], V(score))
+                s1, s2, score = str(example[0][0]), str(example[0][1]), float(example[0][2])
+                pred = self.model(s1, s2)
+                loss = loss_func(pred[0], (V(score)-1)/5) # to test cosine_sim method
                 total_loss += loss.item()
                 loss.backward()
                 opt_func.step()
 
-            print("epoch {0}, running_loss: {1}".format(e, total_loss/self.num_train_examples))
+            print("epoch {0}, average_training_loss: {1}".format(e, total_loss/self.num_train_examples))
+            avl = self.average_validation_loss(nn.MSELoss())
+            print("\t average validation loss: {0}".format(avl))
+            self.save() # save model weights (and override) each epoch
 
     def train(self, loss_func=nn.MSELoss(), opt_func="adam", batch_size=1, num_epochs=50):
         print("-------------------------  Training STS Predictor -------------------------")
@@ -116,7 +125,7 @@ class STS():
 
         self._setup_model(batch_size)
         if opt_func == "adam":
-            opt_func = torch.optim.Adam(self.model.parameters(), betas=(0.7, 0.99))
+            opt_func = torch.optim.Adam(self.model.parameters(), lr=0.001)
         else:
             print("you've been absolutely trolled")
         
@@ -137,27 +146,62 @@ def train_sts_predictor():
     test_di = STSDataIterator(sts_data+'test_data.pkl', 1)
     word_embeddings = api.load(args.word_embedding_source)
 
-    predictor = STS('sts_predictor_1', args.saved_models, word_embeddings, args.embedding_dim, train_di, dev_di=dev_di, test_di=test_di)
+    predictor = STS('sts_predictor_5', args.saved_models, word_embeddings, args.embedding_dim, train_di, dev_di=dev_di, test_di=test_di)
     predictor.train(batch_size=args.batch_size, num_epochs=args.num_epochs)
     predictor.save()
 
     print(predictor.model.encoder.dep_freq)
     print(predictor.model.encoder.rare_dependencies)
 
-    return predictor 
+    pc, info = predictor.all_similarity()
+    print(pc)
 
+    return predictor 
 
 def test_sts_predictor():
     sts_data = args.data_dir + '/stsbenchmark/'
-    test_di = STSDataIterator(sts_data+'dev_data.pkl', 1, randomise=False)
+    train_di = STSDataIterator(sts_data+'train_data.pkl', 1, randomise=False)
+    dev_di = STSDataIterator(sts_data+'dev_data.pkl', 1, randomise=False)
+    test_di = STSDataIterator(sts_data+'test_data.pkl', 1, randomise=False)
     word_embeddings = api.load(args.word_embedding_source)
     
-    predictor = STS(args.model_name, args.saved_models, word_embeddings, args.embedding_dim, train_di=None, dev_di=None, test_di=test_di)
+    predictor = STS('sts_predictor_2', args.saved_models, word_embeddings, args.embedding_dim, train_di=train_di, dev_di=dev_di, test_di=test_di)
     pc, info = predictor.all_similarity()
     print(info[:50]) # printing the worst 50 predictions
     print(pc)
 
+def train_sick_predictor():
+    sick_data = args.data_dir + '/sick/'
+    train_di = STSDataIterator(sick_data+'train.pkl', args.batch_size)
+    test_di = STSDataIterator(sick_data+'test.pkl', 1)
+    word_embeddings = api.load(args.word_embedding_source)
+
+    predictor = STS('sick_1', args.saved_models, word_embeddings, args.embedding_dim, train_di, dev_di=test_di)
+    predictor.train(batch_size=args.batch_size, num_epochs=args.num_epochs)
+    predictor.save()
+
+    pickle.dump(predictor.encoder.unseen_words, 'sick_unseen_words.pkl')
+
+    print(predictor.model.encoder.dep_freq)
+    print(predictor.model.encoder.rare_dependencies)
+
+    return predictor
+
+def test_sick_predictor():
+    sick_data = args.data_dir + '/sick/'
+    train_di = STSDataIterator(sick_data+'train.pkl', args.batch_size)
+    test_di = STSDataIterator(sick_data+'test.pkl', 1)
+    word_embeddings = api.load(args.word_embedding_source)
+
+    predictor = STS('sick_1', args.saved_models, word_embeddings, args.embedding_dim, train_di, test_di=test_di)
+    pc, info = predictor.all_similarity()
+    print(info[:50])
+    print(pc)
+
 
 if __name__ == "__main__":
-    train_sts_predictor()
+    # train_sts_predictor()
     # test_sts_predictor()
+
+    train_sick_predictor()
+    # test_sick_predictor() # 0.63 on test,  0.87 on train

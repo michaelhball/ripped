@@ -26,7 +26,7 @@ english_dependencies = ['acl', 'acomp', 'advcl', 'advmod', 'agent', 'amod', 'app
 # added dependencies to the ignored list if:
     # 1) <3500 occurrences on 10 epochs of training on STS-benchmark data - arbitrary, but they're just v rare
     # 2) punct/root can explain why I don't want to consider these.
-ignored_dependencies = ['expl', 'punct', 'root', 'intj', 'meta', 'oprd', 'predet', 'parataxis', 'dative', 'agent', 'quantmod']
+ignored_dependencies = ['expl', 'punct', 'root', 'intj', 'meta', 'oprd', 'predet', 'parataxis', 'dative', 'agent', 'quantmod', 'det']
 subj_dependencies = ['csubj', 'nsubj']
 subj_pass_dependencies = ['csubjpass', 'nsubjpass']
 prepositional_dependencies = ['pobj', 'pcomp']
@@ -45,12 +45,14 @@ my_dependencies = {
 
 # The new mapping coming from English-specific dependencies
 my_dependencies = {
-    'advmod': 0, 'npadvmod': 0, 'advcl': 0, 'pobj': 1, 'pcomp': 1, 'csubj': 2, 'nsubj': 2,
-    'csubjpass': 3, 'nsubjpass': 3, 'acl': 4, 'acomp': 5, 'amod': 6, 'appos': 7, 'attr': 8,
-    'aux': 9, 'auxpass': 10, 'case': 11, 'cc': 12, 'ccomp': 13, 'compound': 14, 'conj': 15,
-    'dep': 16, 'det': 17, 'dobj': 18, 'mark': 19, 'neg': 20, 'npmod': 21, 'nummod': 22, 'poss': 23,
-    'preconj': 24, 'prep': 25, 'prt': 26, 'relcl': 27, 'xcomp': 28
+    'advmod': 0, 'npadvmod': 0, 'advcl': 0, 'pobj': 1, 'pcomp': 1,
+    'csubj': 2, 'nsubj': 2, 'csubjpass': 3, 'nsubjpass': 3, 'acl': 4,
+    'acomp': 5, 'amod': 6, 'appos': 7, 'attr': 8, 'aux': 9, 'auxpass': 10,
+    'case': 11, 'cc': 12, 'ccomp': 13, 'compound': 14, 'conj': 15, 'dep': 16,
+    'dobj': 17, 'mark': 18, 'neg': 19, 'npmod': 20, 'nummod': 21, 'poss': 22,
+    'preconj': 23, 'prep': 24, 'prt': 25, 'relcl': 26, 'xcomp': 27
 }
+# NB: csubjpass, npmod, preconj all not seen in SICK dataset at all - everything else is.
 
 def get_my_dependencies():
     """
