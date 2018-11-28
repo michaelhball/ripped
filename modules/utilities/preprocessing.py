@@ -1,58 +1,27 @@
-import pickle
+import gensim.downloader as api
+import numpy as np
 import spacy
-import sys
 
 from pathlib import Path
 
 
-class Node():
-    def __init__(self, token):
-        self.token = token
-        self.doc = token.doc # spacy document from which this token came
-        self.sent = token.sent # sentence from which this token came
-        self.root = self.sent.root # root of the sentence from which this token came
-        self.text = token.text # token text
-        self.parent = token.head # parent node
-        self.dep = token.dep_ # dependency relation to parent
-        self.ent_type = token.ent_type_ # named entity type (could start using these for names??)
-        self.children = [Node(c) for c in token.children]
+def tokenise(we_source, data):
+    we = api.load(we_source)
+    nlp = spacy.load('en')
+    tokenised = []
+    if type(data) in (list, np.ndarray):
+        for d in data:
+            s1 = EmbeddingNode(we, list(nlp(str(d[0])).sents)[0].root)
+            s2 = EmbeddingNode(we, list(nlp(str(d[1])).sents)[0].root)
+            score = float(d[2])
+            tokenised.append([s1, s2, score])
     
-    def _string(self, indent):
-        retval = '---[{0}]---> {1}\n'.format(self.dep, self.text)
-        tabs = ''
-        for i in range(indent):
-            tabs += '\t'
-        if self.children:
-            for child in self.children:
-                retval += tabs + child.string(indent+1)
-        
-        return retval
-
-    def __str__(self):
-        return self._string(1)
-
-    def is_root(self):
-        return True if self.dep == 'root' else False
-    
-    def node_phrase(self):
-        return self.token.subtree
+    return tokenised
 
 
 class EmbeddingNode():
-    def __init__(self, node):
-        self.text = node.text
-        self.dep = node.dep
-        self.embedding = None # NEED TO GET FROM WORD EMBEDDINGS
-        self.chidren = [EmbeddingNode(c) for c in node.children]
-    
-    # WE NEED TO CONVERT THIS INTO A LINEAR REPRESENTATION, AND THEN MODiFY FORWARD METHOD OF DEPENDENCY ENCODER RUN ON THESE LINEAR METHODS...
-    # NB: SPACY ALREADY RETURNS THE PARSE LINEARLY, SO I JUST NEED AN ORDERING OF NODES TO VISIT?
-    # SEEMS tricky, largely due to the possibility of multiple children per node.
-
-
-if __name__ == "__main__":
-    sentence = "The young boys are playing outside"
-    nlp = spacy.load('en')
-    root = list(nlp(sentence).sents)[0].root
-    root_node = Node(root)
-    print(root_node)
+    def __init__(self, we, node):
+        self.text = node.text.lower()
+        self.dep = node.dep_
+        self.embedding = we[self.text] if self.text in we else we['unk']
+        self.children = [EmbeddingNode(we, c) for c in node.children]
