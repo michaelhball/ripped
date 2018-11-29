@@ -115,5 +115,5 @@ dmypy.json
 .pyre/
 
 baseline_models/
-models/
+./models/
 data/
