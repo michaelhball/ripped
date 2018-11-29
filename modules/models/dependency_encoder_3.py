@@ -4,9 +4,8 @@ import torch.nn.functional as F
 
 from torch.autograd import Variable
 
-# from modules.utilities import EmbeddingNode
-
 from .linear_block import LinearBlock
+
 
 class DependencyEncoder3(nn.Module):
     def __init__(self, embedding_dim, batch_size, dependency_map, evaluate=False):
@@ -57,19 +56,14 @@ class DependencyEncoder3(nn.Module):
         output, hidden_state = self.lstm(zs)
         z = hidden_state[-1].view(1, -1) # just using final hidden state
 
+        if self.evaluate:
+            node.representation = z
+
         return z
 
     def forward(self, input):
-        if self.evaluate: # need to be able to pass this down and add representation at every node.
-            input.representation = None
         with torch.set_grad_enabled(self.training):
-            return self.recur(input)
-
-
-class RepresentationTree():
-    def __init__(self, embedding_tree):
-        self.representation = None
-        self.text = embedding_tree.tree
-        self.dep = embedding_tree.dep
-        self.embedding = embedding_tree.embedding
-        self.children = [RepresentationTree(c) for c in embedding_tree.children]
+            output = self.recur(input)
+            if self.evaluate: # return input that's had representations added for every node.
+                return input
+            return output
