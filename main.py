@@ -1,5 +1,6 @@
 import argparse
 import gensim.downloader as api
+import math
 import pickle
 import spacy
 import time
@@ -10,8 +11,8 @@ from pathlib import Path
 from scipy.stats.stats import pearsonr
 
 from modules.data_iterators import EasyIterator, STSDataIterator
-from modules.models import create_sts_predictor, create_cosine_dist_sts_predictor
-from modules.utilities import my_dependencies, plot_train_test_loss, V
+from modules.models import create_cosine_sim_sts_predictor, create_euclid_sim_sts_predictor
+from modules.utilities import all_dependencies, my_dependencies, plot_train_test_loss, V
 
 
 parser = argparse.ArgumentParser(description='PyTorch Dependency-Parse Encoding Model')
@@ -31,7 +32,6 @@ class STS():
     A class for training an STS predictor.
     """
     def __init__(self, name, saved_models, embedding_dim, dependencies, train_di, test_di):
-        # NEED TO TAKE IN MORE HERE TO MAKE IT MORE GENERALISABLE
         self.name = name
         self.saved_models = saved_models
         self.embedding_dim = embedding_dim
@@ -42,7 +42,7 @@ class STS():
 
     def save(self):
         self.save_model()
-        self._save_encoder()
+        self.save_encoder()
 
     def save_model(self):
         path = self.saved_models + '/{0}.pt'.format(self.name)
@@ -61,7 +61,7 @@ class STS():
         self.model.encoder.load_state_dict(torch.load(path))
     
     def create_model(self):
-        self.model = create_cosine_dist_sts_predictor(self.embedding_dim, self.batch_size, self.dependencies)
+        self.model = create_cosine_sim_sts_predictor(self.embedding_dim, self.batch_size, self.dependencies, encoder_model=3)
 
     def test_pc(self, load=False):
         if load:
@@ -96,10 +96,48 @@ class STS():
             total_loss += loss.item()
         
         return total_loss / self.test_di.num_examples
+    
+    def find_lr(self, max_lr, ratio, cut_frac, cut, e, i):
+        t_epoch = e * (len(self.train_di) / 100) # simulating batch_size of 20
+        t = t_epoch + (i // 100) # simulating batch_size of 20
+        p = t / cut if t < cut else 1 - ((t - cut) / (cut * (1 / cut_frac - 1)))
+
+        return max_lr * (1 + p * (ratio - 1)) / ratio
+    
+    def find_lr_sgdr(self, max_lr, min_lr, e, i):
+        num_batches = len(train_di) / 50 # simulating batch_size of 50
+        frac = float(i//50) / num_batches # fraction through current epoch
+
+        # cycle every 2 epochs
+        if e % 2 == 0:
+            Tcur = frac
+        else:
+            Tcur = frac + 1
+        Ti = 2
+        return min_lr + 0.5*(max_lr-min_lr)*(1+math.cos((Tcur/Ti)*math.pi))
+
+        # 3 different length cycles.
+        if e == 0:
+            Tcur = frac
+            Ti = 1
+        elif e < 4:
+            Tcur = frac + e - 1
+            Ti = 4
+        else:
+            Tcur = frac + e - 4
+            Ti = 10
+
+        return min_lr + 0.5*(max_lr-min_lr)*(1+math.cos((Tcur/Ti)*math.pi))
 
     def train(self, loss_func, opt_func, num_epochs=50):
         print("-------------------------  Training STS Predictor -------------------------")
         start_time = time.time()
+
+        # MAX_LR = 0.1
+        # T = num_epochs * (len(self.train_di) / 100) # simulating batch_size of 20
+        # cut_frac = 0.1
+        # cut = max(1.0, float(math.floor(T * cut_frac)))
+        # ratio = 32
 
         train_losses = []
         test_losses = [] # change this to use a dev set that's a partition of the training set.
@@ -108,6 +146,12 @@ class STS():
             self.model.training = True
             total_loss = 0.0
             for i, example in enumerate(iter(self.train_di)):
+                
+                # Slanted Triangular Learning Rates / SGDR
+                # if i % 50 == 0: # i.e. simulated batch size of 50
+                    # opt_func.param_groups[0]['lr'] = self.find_lr(MAX_LR, ratio, cut_frac, cut, e, i)
+                    # opt_func.param_groups[0]['lr'] = self.find_lr_sgdr(MAX_LR, MAX_LR*0.001, e, i)
+
                 self.model.zero_grad()
                 s1, s2, score = example
                 pred = self.model(s1, s2)
@@ -128,51 +172,58 @@ class STS():
         return train_losses, test_losses
 
 
-# def train_sick_predictor(name):
-#     sick_data = args.data_dir + '/sick/'
-#     # train_di = STSDataIterator(sick_data+'train.pkl', args.batch_size, args.word_embedding_source)
-#     # train_di.save_data(sick_data+'train_data_glove_50.pkl')
-#     # test_di = STSDataIterator(sick_data+'test.pkl', 1, args.word_embedding_source)
-#     # test_di.save_data(args.data_dir+'/test_data_glove_50.pkl')
-
-#     train_di = EasyIterator(sick_data+'train_data_glove_50.pkl')
-#     test_di = EasyIterator(sick_data+'test_data_glove_50.pkl')
-
-#     predictor = STS(name, args.saved_models, word_embeddings, args.embedding_dim, train_di, dev_di=test_di)
-#     predictor.train(opt_func="adam", batch_size=args.batch_size, num_epochs=args.num_epochs)
-
-#     # pickle.dump(predictor.model.encoder.unseen_words, Path('sick_unseen_words.pkl').open('wb'))
-
-#     # print(predictor.model.encoder.dep_freq)
-#     # print(predictor.model.encoder.rare_dependencies)
-
-#     test_sick_predictor(name)
-
-#     return predictor
-
-
 def train_model(predictor, num_epochs, loss_func, opt_func, visualise=False, save=False):
     train_losses, test_losses = predictor.train(loss_func, opt_func, num_epochs)
     if visualise:
-        plot_train_test_loss(train_losses, test_losses)
+        plot_train_test_loss(train_losses, test_losses, save_file=f'./data/sick/loss_plots/{args.model_name}.png')
     if save:
         predictor.save()
 
 
 if __name__ == "__main__":
 
-    loss_func = nn.MSELoss()
-    embedding_dim = int(args.word_embedding.split('_')[1])
-    sick_data = args.data_dir + '/sick'
+    # loss_func = nn.MSELoss()
+    # embedding_dim = int(args.word_embedding.split('_')[1])
+    # sick_data = args.data_dir + '/sick'
 
-    train_di = EasyIterator(sick_data + f'/train_data_{args.word_embedding}.pkl')
-    test_di = EasyIterator(sick_data + f'/test_data_{args.word_embedding}.pkl')
-    opt = torch.optim.SGD
-    lr = 0.01
+    # train_di = EasyIterator(sick_data + f'/train_data_{args.word_embedding}.pkl')
+    # test_di = EasyIterator(sick_data + f'/test_data_{args.word_embedding}.pkl')
+    # opt = torch.optim.Adam
+    # lr = 0.001
+    # weight_decay = 0
+    # params = {} # params to modify encoding model
 
-    predictor = STS(args.model_name, args.saved_models, embedding_dim, my_dependencies, train_di, test_di)
-    opt_func = opt(predictor.model.parameters(), lr=lr)
+    # predictor = STS(args.model_name, args.saved_models, embedding_dim, all_dependencies, train_di, test_di)
+    # opt_func = opt(predictor.model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    if args.task == "train":
-        train_model(predictor, args.num_epochs, loss_func, opt_func, visualise=True)
-        print(predictor.test_pc())
+    # # pg1 = [{'params': predictor.model.encoder.lstm.parameters(), 'lr': lr}]
+    # # pg2 = [{'params': ps, 'lr': lr} for ps in predictor.model.encoder.params.parameters()]
+    # # param_groups = pg1 + pg2
+    # # opt_func = opt(param_groups)
+
+    # if args.task == "train":
+    #     train_model(predictor, args.num_epochs, loss_func, opt_func, visualise=True, save=True)
+    #     print(predictor.test_pc())
+
+
+    # from modules.utilities import tokenise
+    # from collections import defaultdict
+
+    # vocab = pickle.load(Path('./data/sick/vocab.pkl').open('rb'))
+    # string2idx = defaultdict(lambda: 0, {v: k for k,v in enumerate(vocab)})
+
+    # train_data = pickle.load(Path('./data/sick/train_data_indexed.pkl').open('rb'))
+    # test_data = pickle.load(Path('./data/sick/test_data_indexed.pkl').open('rb'))
+    # these are the datasets we can use as input to the model. Need to add embedding to the model yet though.
+    
+    train_data = pickle.load(Path('./data/sick/train_data_indexed.pkl').open('rb'))
+    test_data = pickle.load(Path('./data/sick/test_data_indexed.pkl').open('rb'))
+
+    total_len = 0
+    for x in train_data:
+        total_len += len(x[0]) + len(x[1])
+    print(total_len / (len(train_data) * 2))
+    total_len = 0
+    for y in test_data:
+        total_len += len(y[0]) + len(y[1])
+    print(total_len / (len(test_data) * 2))
