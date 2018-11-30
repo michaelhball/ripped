@@ -7,7 +7,7 @@ from torch.autograd import Variable
 from .linear_block import LinearBlock
 
 
-class DependencyEncoder(nn.Module):
+class DependencyEncoder1(nn.Module):
     def __init__(self, embedding_dim, batch_size, dependency_map, evaluate=False):
         """
         Sentence embedding model using dependency parse structure.
