@@ -5,14 +5,7 @@ import spacy
 from collections import Counter, defaultdict
 from pathlib import Path
 
-
-class EmbeddingNode():
-    def __init__(self, we, node):
-        self.text = node.text.lower()
-        self.dep = node.dep_
-        self.representation = None
-        self.embedding = we[self.text] if self.text in we else we['unk']
-        self.children = [EmbeddingNode(we, c) for c in node.children]
+from .tree import EmbeddingNode
 
 
 def tokenise_and_embed(we_source, data):
