@@ -114,6 +114,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-baseline_models/
-./models/
+./baseline_models/
+./models
 data/
