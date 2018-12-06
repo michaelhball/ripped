@@ -8,6 +8,17 @@ from pathlib import Path
 from .tree import EmbeddingNode
 
 
+def convert(embeddings, node):
+    # to convert from EmbeddingTree to unordered list of embeddings for testing pooling baseline.
+    embeddings.append(node.embedding)
+    for c in node.chidren:
+        convert(embeddings, c)
+
+
+def tokenise_sent(we, nlp, sentence):
+    return EmbeddingNode(we, list(nlp(sentence).sents)[0].root)
+
+
 def tokenise_and_embed(we_source, data):
     we = api.load(we_source)
     nlp = spacy.load('en')

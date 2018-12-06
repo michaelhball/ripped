@@ -54,6 +54,18 @@ my_dependencies = {
 }
 # NB: csubjpass, npmod, preconj all not seen in SICK dataset at all - everything else is.
 
+# to test using all english dependencies.
+all_dependencies = {
+    'acl': 0, 'acomp': 1, 'advcl': 2, 'advmod': 3, 'agent': 4, 'amod': 5, 
+    'appos': 6, 'attr': 7, 'aux': 8, 'auxpass': 9, 'case': 10, 'cc': 11, 
+    'ccomp': 12, 'compound': 13, 'conj': 14, 'csubj': 15, 'csubjpass': 16, 
+    'dative': 17, 'dep': 18, 'det': 19, 'dobj': 20, 'expl': 21, 'intj': 22, 
+    'mark': 23, 'meta': 24, 'neg': 25, 'npmod': 26, 'nsubj': 27, 'nsubjpass': 28, 
+    'nummod': 29, 'oprd': 30, 'parataxis': 31, 'pcomp': 32, 'pobj': 33, 
+    'poss': 34, 'preconj': 35, 'predet': 36, 'prep': 37, 'prt': 38, 'punct': 39, 
+    'quantmod': 40, 'relcl': 41, 'root': 42, 'xcomp': 43
+}
+
 def get_my_dependencies():
     """
     How to get these dependencies. The idea is that we will use the same params
@@ -82,4 +94,11 @@ def get_my_dependencies():
     return ds
 
 if __name__ == "__main__":
-    print(get_my_dependencies())
+    count = 0
+    ds = {}
+    for d in english_dependencies:
+        if d not in ds.keys():
+            ds[d] = count
+            count += 1
+
+    print(ds)
