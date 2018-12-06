@@ -4,7 +4,7 @@ import pickle
 from pathlib import Path
 from random import shuffle
 
-from modules.utilities import randomise, tokenise
+from modules.utilities import randomise, tokenise_and_embed
 
 
 # THIS CAN BE CLEANED UP A BIT TO TAKE IN A DATA_READER... IT'S JUST THE EASY_ITERATOR THAT ONLY TAKES IN A FILE
@@ -45,7 +45,7 @@ class STSDataIterator(): # this has to be created for each dataset e.g. one each
         return self.batched_data[i]
     
     def reset(self):
-        self.data = tokenise(self.we_source, self.data)
-        # self.batched_data = self.batchify(self.data)
-        # self.n = len(self.batched_data)
-        # self.i, self.iter = 0, 0
+        self.data = tokenise_and_embed(self.we_source, self.data)
+        self.batched_data = self.batchify(self.data)
+        self.n = len(self.batched_data)
+        self.i, self.iter = 0, 0
