@@ -4,6 +4,7 @@ import torch
 
 from pathlib import Path
 from random import shuffle
+from scipy.stats.stats import pearsonr, spearmanr
 
 from modules.baseline_models import create_pooling_baseline
 from modules.utilities import V

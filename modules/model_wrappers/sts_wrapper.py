@@ -1,6 +1,8 @@
 import time
 import torch
 
+from scipy.stats.stats import pearsonr, spearmanr
+
 from modules.models import create_cosine_sim_sts_predictor, create_sts_predictor
 from modules.utilities import V
 
