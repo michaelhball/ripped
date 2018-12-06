@@ -29,3 +29,11 @@ def create_cosine_sim_sts_predictor(embedding_dim, batch_size, dependency_map, e
 def create_euclid_sim_sts_predictor(embedding_dim, batch_size, dependency_map, encoder_model):
     encoder = dependency_encoders[encoder_model](embedding_dim, batch_size, dependency_map)
     return EuclidSimSTSPredictor(encoder)
+
+
+def create_encoder(embedding_dim, batch_size, dependency_map, encoder_model):
+    return dependency_encoders[encoder_model](embedding_dim, batch_size, dependency_map)
+
+
+def create_classifier(layers, drops):
+    return BasicClassifier(layers, drops)

@@ -17,9 +17,10 @@ class STSPredictor(nn.Module):
     def forward(self, input1, input2):
         x_1 = self.encoder(input1) # 1xd
         x_2 = self.encoder(input2) # 1xd
-        # diff = (x_1-x_2).abs() # 1xd
+        diff = (x_1-x_2).abs() # 1xd
         # mult = x_1 * x_2 # 1xd
-        x = torch.cat((x_1, x_2), 0).reshape(1,-1) # 1x2d
+        # x = torch.cat((x_1, x_2), 0).reshape(1,-1) # 1x2d
+        x = diff
         
         for l in self.layers:
             l_x = l(x)

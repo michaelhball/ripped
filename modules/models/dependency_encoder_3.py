@@ -57,7 +57,7 @@ class DependencyEncoder3(nn.Module):
         z = hidden_state[-1].view(1, -1) # just using final hidden state
 
         if self.evaluate:
-            node.representation = z
+            node.representation = z.detach()
 
         return z
 
