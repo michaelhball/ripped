@@ -1,24 +1,18 @@
 import argparse
 import gensim.downloader as api
-import math
 import pickle
 import spacy
-import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from pathlib import Path
-from random import shuffle
-from scipy.stats.stats import pearsonr, spearmanr
-from sklearn.metrics.pairwise import cosine_similarity
 
-from modules.baseline_models import create_pooling_baseline
-from modules.data_iterators import EasyIterator, SentEvalDataIterator, STSDataIterator
+from modules.data_iterators import EasyIterator, SentEvalDataIterator
 from modules.data_readers import SentEvalDataReader
 from modules.models import create_encoder
 from modules.model_wrappers import BaselineWrapper, ProbingWrapper, STSWrapper
-from modules.utilities import all_dependencies, EmbeddingNode, my_dependencies, plot_train_test_loss, tokenise_sent, V
+from modules.utilities import all_dependencies, my_dependencies, plot_train_test_loss, tokenise_sent, V
 
 
 parser = argparse.ArgumentParser(description='PyTorch Dependency-Parse Encoding Model')
@@ -114,9 +108,9 @@ def nearest_neighbours(encoder, test_di, test_data, sent, k=10):
     nlp = spacy.load('en')
     enc = encoder(tokenise_sent(we, nlp, sent))
     neighbours = []
-    for k, v in encodings.items():
-        cosine_sim = F.cosine_similarity(enc, v).item()
-        neighbours.append((k, cosine_sim))
+    for sent, emb in encodings.items():
+        cosine_sim = F.cosine_similarity(enc, emb).item()
+        neighbours.append((sent, cosine_sim))
     neighbours = sorted(neighbours, key=lambda x: x[1], reverse=True)
 
     return neighbours[:k]
@@ -185,14 +179,9 @@ if __name__ == "__main__":
             test_data = pickle.load(Path(sick_data+'/test.pkl').open('rb'))
             test_di = EasyIterator(sick_data+f'/test_data_{args.word_embedding}.pkl', randomise=False)
             sent = "A guy is mowing the lawn"
-            print(nearest_neighbours(encoder, test_di, test_data, sent, k=10))
+            print(nearest_neighbours(encoder, test_di, test_data, sent))
         else:
-            print(test_similarity(encoder))
-
-    elif args.task == "probing_model":
-        train_nodes = pickle.load(Path('./data/sick/train_data_glove_50.pkl').open('rb'))
-        train_data = pickle.load(Path('./data/sick/train.pkl').open('rb'))
-        probe_model(predictor, train_data[60][:2], train_nodes[60][:2])
+            print(test_similarity(encoder))s
 
     elif args.task.startswith("probe"):
         probing_task = args.task.split("_", 1)[1]
