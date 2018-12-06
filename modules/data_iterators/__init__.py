@@ -1,2 +1,3 @@
 from .easy_iterator import EasyIterator
+from .senteval_data_iterator import SentEvalDataIterator
 from .sts_data_iterator import STSDataIterator

@@ -5,12 +5,13 @@ from random import shuffle
 
 
 class EasyIterator():
-    # ignores batching for now.
     def __init__(self, data_file, batch_size=1, randomise=True):
         self.data_file = data_file
         self.batch_size = batch_size
         self.randomise = randomise
         self.fetch_data()
+        self.reset()
+        self.train_data = self.data
     
     def __len__(self):
         return self.num_examples
@@ -25,7 +26,6 @@ class EasyIterator():
     def fetch_data(self):
         self.data = pickle.load(Path(self.data_file).open('rb'))
         self.num_examples = len(self.data)
-        self.reset()
     
     def reset(self):
         self.i = 0
