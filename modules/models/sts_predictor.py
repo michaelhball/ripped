@@ -15,12 +15,11 @@ class STSPredictor(nn.Module):
         self.layers = nn.ModuleList([LinearBlock(layers[i], layers[i+1], drops[i]) for i in range(len(layers) - 1)])
     
     def forward(self, input1, input2):
-        x_1 = self.encoder(input1) # 1xd
-        x_2 = self.encoder(input2) # 1xd
-        diff = (x_1-x_2).abs() # 1xd
-        # mult = x_1 * x_2 # 1xd
-        # x = torch.cat((x_1, x_2), 0).reshape(1,-1) # 1x2d
-        x = diff
+        x1 = self.encoder(input1) # 1xd
+        x2 = self.encoder(input2) # 1xd
+        diff = (x1-x2).abs() # 1xd
+        mult = x1 * x2 # 1xd
+        x = torch.cat((diff, mult), 0).reshape(1,-1) # 1x4d
         
         for l in self.layers:
             l_x = l(x)
