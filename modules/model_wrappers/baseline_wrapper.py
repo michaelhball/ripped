@@ -13,14 +13,13 @@ from .base_wrapper import BaseWrapper
 
 
 class BaselineWrapper(BaseWrapper):
-    def __init__(self, name, saved_models, train_data, test_data, layers, drops, baseline_type="pool", pool_type="max", embedding_dim=None, num_layers=None):
+    def __init__(self, name, saved_models, train_data, test_data, layers, drops, baseline_type="pool", embedding_dim=None, num_layers=None):
         self.name = name
         self.saved_models = saved_models
         self.train_data = pickle.load(Path(train_data).open('rb'))
         self.test_data = pickle.load(Path(test_data).open('rb'))
         self.layers = layers
         self.drops = drops
-        self.pool_type = pool_type
         self.baseline_type = baseline_type
         if self.baseline_type.startswith("lstm"):
             self.embedding_dim = embedding_dim
@@ -46,7 +45,7 @@ class BaselineWrapper(BaseWrapper):
         elif self.baseline_type == "lstm":
             self.model = create_lstm_baseline(self.embedding_dim, self.num_layers, self.layers, self.drops)
         else:
-            self.model = create_pooling_baseline(self.layers, self.drops, self.pool_type)
+            self.model = create_pooling_baseline(self.layers, self.drops, self.baseline_type.split('_')[1])
 
     def test_correlation(self, load=False):
         if load:
