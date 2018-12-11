@@ -1,3 +1,4 @@
+import math
 import time
 import torch
 
@@ -9,7 +10,7 @@ from modules.utilities import V
 from .base_wrapper import BaseWrapper
 
 
-class STSWrapper():
+class STSWrapper(BaseWrapper):
     """
     A class for training an STS predictor.
     """
@@ -62,7 +63,7 @@ class STSWrapper():
             s1, s2, score = example
             pred = self.model(s1, s2)
             preds.append(pred.item())
-            scores.append(score-1/4)
+            scores.append((score-1)/4)
             info.append((i, score, pred.item()))
         
         pearson = pearsonr(preds, scores)
@@ -126,6 +127,7 @@ class STSWrapper():
             ratio = 32
 
         train_losses, test_losses = [], []
+        correlations = []
         for e in range(num_epochs):
             self.model.train()
             self.model.training = True
@@ -146,12 +148,22 @@ class STSWrapper():
                 opt_func.step()
 
             avg_train_loss = total_loss / self.train_di.num_examples
-            avg_test_loss = self.average_test_loss(loss_func)
+            avg_test_loss = self.avg_test_loss(loss_func)
             train_losses.append(avg_train_loss)
             test_losses.append(avg_test_loss)
-            print(f"epoch {e+1}, avg train loss: {avg_train_loss}, avg test loss: {avg_test_loss}")
+
+            p, s, _ = self.test_correlation()
+            correlations.append((e+1, round(p[0],3), round(s[0],3)))
+            path = self.saved_models + f'/{self.name}_{e+1}.pt'
+            torch.save(self.model.state_dict(), path)
+            path = self.saved_models + f'/{self.name}_encoder_{e+1}.pt'
+            torch.save(self.model.encoder.state_dict(), path)
+
+            print(f"epoch {e+1}, avg train loss: {avg_train_loss}, avg test loss: {avg_test_loss}, test pearson: {round(p[0], 3)}")
+
 
         elapsed_time = time.time() - start_time
+        print(correlations)
         print("Trained STS Predictor completed in {0}".format(time.strftime("%H:%M:%S", time.gmtime(elapsed_time))))
 
         return train_losses, test_losses

@@ -6,14 +6,14 @@ from pathlib import Path
 from random import shuffle
 from scipy.stats.stats import pearsonr, spearmanr
 
-from modules.baseline_models import create_pooling_baseline
+from modules.baseline_models import create_lstm_baseline, create_lstm_avg_baseline, create_lstm_max_baseline, create_pooling_baseline
 from modules.utilities import V
 
 from .base_wrapper import BaseWrapper
 
 
 class BaselineWrapper(BaseWrapper):
-    def __init__(self, name, saved_models, train_data, test_data, layers, drops, pool_type):
+    def __init__(self, name, saved_models, train_data, test_data, layers, drops, baseline_type="pool", pool_type="max", embedding_dim=None, num_layers=None):
         self.name = name
         self.saved_models = saved_models
         self.train_data = pickle.load(Path(train_data).open('rb'))
@@ -21,18 +21,32 @@ class BaselineWrapper(BaseWrapper):
         self.layers = layers
         self.drops = drops
         self.pool_type = pool_type
+        self.baseline_type = baseline_type
+        if self.baseline_type.startswith("lstm"):
+            self.embedding_dim = embedding_dim
+            self.num_layers = num_layers
         self.create_model()
     
     def save(self):
         path = self.saved_models + f'/baseline_{self.name}.pt'
         torch.save(self.model.state_dict(), path)
+        if self.baseline_type == "lstm":
+            path = self.saved_models + f'/baseline_{self.name}_encoder.pt'
+            torch.save(self.model.encoder.state_dict(), path)
     
     def load(self):
         path = self.saved_models + f'/baseline_{self.name}.pt'
         self.model.load_state_dict(torch.load(self.model.state_dict(), path))
     
     def create_model(self):
-        self.model = create_pooling_baseline(self.layers, self.drops, self.pool_type)
+        if self.baseline_type == "lstm_avg":
+            self.model = create_lstm_avg_baseline(self.embedding_dim, self.num_layers, self.layers, self.drops)
+        elif self.baseline_type == "lstm_max":
+            self.model = create_lstm_max_baseline(self.embedding_dim, self.num_layers, self.layers, self.drops)
+        elif self.baseline_type == "lstm":
+            self.model = create_lstm_baseline(self.embedding_dim, self.num_layers, self.layers, self.drops)
+        else:
+            self.model = create_pooling_baseline(self.layers, self.drops, self.pool_type)
 
     def test_correlation(self, load=False):
         if load:
@@ -45,7 +59,7 @@ class BaselineWrapper(BaseWrapper):
             s1, s2, score = example
             pred = self.model(s1, s2)
             preds.append(pred.item())
-            scores.append(score-1/4)
+            scores.append((score-1)/4)
             info.append((i, score, pred.item()))
         
         pearson = pearsonr(preds, scores)
@@ -54,10 +68,24 @@ class BaselineWrapper(BaseWrapper):
         
         return pearson, spearman, info
     
+    def avg_test_loss(self, loss_func, load=False):
+        if load:
+            self.create_model()
+            self.load_model()
+        self.model.eval()
+        self.model.training = False
+        total_loss = 0.0
+        for i, example in enumerate(self.test_data):
+            s1, s2, score = example
+            pred = self.model(s1, s2)
+            total_loss += loss_func(pred[0], V((score-1)/4))
+
+        return total_loss / len(self.test_data)
+    
     def train(self, loss_func, opt_func, num_epochs=10):
         print("-------------------------  Training Baseline Predictor -------------------------")
         start_time = time.time()
-        train_losses = []
+        train_losses, test_losses = [], []
         for e in range(num_epochs):
             self.model.train()
             self.model.training = True
@@ -74,9 +102,11 @@ class BaselineWrapper(BaseWrapper):
 
             avg_train_loss = total_loss / len(self.train_data)
             train_losses.append(avg_train_loss)
-            print(f'epoch {e+1}, average train loss: {avg_train_loss}')
+            test_loss = self.avg_test_loss(loss_func)
+            test_losses.append(test_loss)
+            print(f'epoch {e+1}, average train loss: {avg_train_loss}, average test loss: {test_loss}')
 
         elapsed_time = time.time() - start_time
         print("Trained Baseline Predictor completed in {0}".format(time.strftime("%H:%M:%S", time.gmtime(elapsed_time))))
 
-        return train_losses
+        return train_losses, test_losses
