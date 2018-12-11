@@ -26,7 +26,9 @@ class PoolingPredictor(nn.Module):
         else:
             print("um, that's an invalid pooling type")
         
-        x = torch.cat((x1, x2), 0).view(1, -1)
+        diff = (x1-x2).abs()
+        mult = x1 * x2
+        x = torch.cat((diff, mult), 0).view(1, -1)
         for l in self.layers:
             l_x = l(x)
             x = F.relu(l_x)
