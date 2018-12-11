@@ -2,9 +2,15 @@ class EmbeddingNode():
     def __init__(self, we, node):
         self.text = node.text.lower()
         self.dep = node.dep_
+        self.pos = node.pos_
         self.representation = None
         self.embedding = we[self.text] if self.text in we else we['unk']
         self.chidren = [EmbeddingNode(we, c) for c in node.children]
+    
+    def subj(self):
+        for c in self.chidren:
+            if c.dep == "nsubj" or c.dep == "csubj" or c.dep == "nsubjpass" or c.dep == "csubjpass":
+                return c
     
     def children_width(self, node):
         total_width = 0
