@@ -79,8 +79,7 @@ class STSWrapper(BaseWrapper):
         for i, example in enumerate(iter(self.test_di)):
             s1, s2, score = example
             pred = self.model(s1, s2)
-            loss = loss_func(pred[0], (V(score)-1)/4)
-            total_loss += loss.item()
+            total_loss += loss_func(pred[0], V((score)-1)/4)
         
         return total_loss / self.test_di.num_examples
     
@@ -142,7 +141,7 @@ class STSWrapper(BaseWrapper):
                 self.model.zero_grad()
                 s1, s2, score = example
                 pred = self.model(s1, s2)
-                loss = loss_func(pred[0], (V(score)-1)/4)
+                loss = loss_func(pred[0], V((score)-1)/4)
                 total_loss += loss.item()
                 loss.backward()
                 opt_func.step()
