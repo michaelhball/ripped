@@ -5,8 +5,9 @@ from .dependency_encoder_2 import DependencyEncoder2
 from .dependency_encoder_3 import DependencyEncoder3
 from .euclid_sim_sts_predictor import EuclidSimSTSPredictor
 from .linear_block import LinearBlock
-from .pos_encoder import POSTagEncoder
-from .similarity_predictor import SimilarityPredictor
+from .pos_encoder_1 import POSEncoder1
+from .pos_encoder_1_lstm import POSEncoder1LSTM
+from .pos_encoder_2 import POSEncoder2
 from .sts_predictor import STSPredictor
 
 
@@ -14,7 +15,9 @@ dependency_encoders = {
     "1": DependencyEncoder1,
     "2": DependencyEncoder2,
     "3": DependencyEncoder3,
-    "pos": POSTagEncoder
+    "pos": POSEncoder1,
+    "pos_lstm": POSEncoder1LSTM,
+    "pos2": POSEncoder2
 }
 
 
@@ -39,7 +42,3 @@ def create_encoder(embedding_dim, batch_size, dependency_map, encoder_model):
 
 def create_classifier(layers, drops):
     return BasicClassifier(layers, drops)
-
-
-def create_similarity_predictor(layers, drops):
-    return SimilarityPredictor(layers, drops)

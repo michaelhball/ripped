@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-class POSTagEncoder(nn.Module):
+class POSEncoder1(nn.Module):
     def __init__(self, embedding_dim, batch_size, pos_tags, evaluate=False):
         """
         Sentence embedding model using pos tags.
@@ -22,28 +22,6 @@ class POSTagEncoder(nn.Module):
         self.lstm = nn.LSTM(self.embedding_dim, self.embedding_dim, 1)
         self.evaluate = evaluate
 
-        # # to analyse pos tag usage
-        # self.tag_freq = {}
-        # self.rare_tags = set()
-
-    # def recur(self, node, node_reps):
-    #     if node.pos not in self.tag_freq:
-    #         self.tag_freq[node.pos] = 0
-    #     else:
-    #         self.tag_freq[node.pos] += 1
-    #     if node.pos not in self.pos_tags:
-    #         if node.pos not in self.rare_tags:
-    #             self.rare_tags.add(node.pos)
-    #         return
-
-    #     x = Variable(torch.tensor([node.embedding], dtype=torch.float), requires_grad=True)
-    #     D = self.params[self.pos_tags[node.pos]]
-    #     z = D(x)
-    #     node_reps.append(z)
-
-    #     for c in node.chidren:
-    #         self.recur(c, node_reps)
-
     def forward(self, input):
         with torch.set_grad_enabled(self.training):
             word_reps = []
@@ -51,12 +29,10 @@ class POSTagEncoder(nn.Module):
                 x = Variable(torch.tensor([emb], dtype=torch.float), requires_grad=True)
                 D = self.params[self.pos_tags[pos]]
                 z = D(x)
-                # z = F.relu(z)
+                z = F.relu(z)
                 word_reps.append(z)
 
             z = torch.stack(word_reps)
-            # output, _ = torch.max(z, 0)
-            outputs, hidden_states = self.lstm(z)
-            output, _ = torch.max(outputs, 0)
+            output, _ = torch.max(z, 0)
 
             return output

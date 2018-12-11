@@ -19,8 +19,7 @@ class STSPredictor(nn.Module):
         x2 = self.encoder(input2) # 1xd
         diff = (x1-x2).abs() # 1xd
         mult = x1 * x2 # 1xd
-        x = torch.cat((diff, mult), 0).reshape(1,-1) # 1x4d
-        
+        x = torch.cat((diff, mult), 0).reshape(1, -1) # 1x4d
         for l in self.layers:
             l_x = l(x)
             x = F.relu(l_x)
