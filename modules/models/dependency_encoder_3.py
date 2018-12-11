@@ -54,10 +54,12 @@ class DependencyEncoder3(nn.Module):
 
         zs = torch.stack(z_cs + [x]) # nx1xd (n = #children+1)
         output, hidden_state = self.lstm(zs)
-        z = hidden_state[-1].view(1, -1) # just using final hidden state
+        z = hidden_state[-1].view(1, -1)
 
         if self.evaluate:
-            node.representation = z.detach()
+            node.representation = z.detach().numpy()
+            _, hs = self.lstm(torch.stack([x]))
+            node.embedding = hs[-1].view(1, -1).detach().numpy()
 
         return z
 
