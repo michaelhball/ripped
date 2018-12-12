@@ -3,6 +3,7 @@ import time
 import torch
 
 from scipy.stats.stats import pearsonr, spearmanr
+from tqdm import tqdm
 
 from modules.models import create_cosine_sim_sts_predictor, create_sts_predictor
 from modules.utilities import V
@@ -82,62 +83,16 @@ class STSWrapper(BaseWrapper):
             total_loss += loss_func(pred[0], V((score)-1)/4)
         
         return total_loss / self.test_di.num_examples
-    
-    def find_lr(self, max_lr, ratio, cut_frac, cut, e, i):
-        # /50 is for simulating a batch_size of 50
-        t_epoch = e * (len(self.train_di) / 50)
-        t = t_epoch + (i // 50)
-        p = t / cut if t < cut else 1 - ((t - cut) / (cut * (1 / cut_frac - 1)))
 
-        return max_lr * (1 + p * (ratio - 1)) / ratio
-    
-    def find_lr_sgdr(self, max_lr, min_lr, e, i):
-        # /50 is to simulate a batch_size of 50
-        num_batches = len(train_di) / 50
-        frac = float(i//50) / num_batches # fraction through current epoch
-
-        # cycle every 2 epochs
-        Tcur = frac if e%2==0 else frac + 1
-        Ti = 2
-        return min_lr + 0.5*(max_lr-min_lr)*(1+math.cos((Tcur/Ti)*math.pi))
-
-        # 3 different length cycles.
-        if e == 0:
-            Tcur = frac
-            Ti = 1
-        elif e < 4:
-            Tcur = frac + e - 1
-            Ti = 4
-        else:
-            Tcur = frac + e - 4
-            Ti = 10
-
-        return min_lr + 0.5*(max_lr-min_lr)*(1+math.cos((Tcur/Ti)*math.pi))
-
-    def train(self, loss_func, opt_func, lr_scheme=None, num_epochs=50):
+    def train(self, loss_func, opt_func, num_epochs=50):
         print("-------------------------  Training STS Predictor -------------------------")
         start_time = time.time()
-
-        if lr_scheme:
-            MAX_LR = 0.01
-            T = num_epochs * (len(self.train_di) / 50)
-            cut_frac = 0.1
-            cut = max(1.0, float(math.floor(T * cut_frac)))
-            ratio = 32
-
-        train_losses, test_losses = [], []
-        correlations = []
+        train_losses, test_losses, correlations = [], [], []
         for e in range(num_epochs):
             self.model.train()
             self.model.training = True
             total_loss = 0.0
-            for i, example in enumerate(iter(self.train_di)):
-                
-                if lr_scheme: # Slanted Triangular Learning Rates / SGDR (for ENC-3)
-                    if i % 50 == 0: # simulated batch_size of 50
-                        opt_func.param_groups[0]['lr'] = self.find_lr(MAX_LR, ratio, cut_frac, cut, e, i)
-                        # opt_func.param_groups[0]['lr'] = self.find_lr_sgdr(MAX_LR, MAX_LR*0.001, e, i)
-
+            for i, example in tqdm(enumerate(iter(self.train_di)), total=len(self.train_di)):
                 self.model.zero_grad()
                 s1, s2, score = example
                 pred = self.model(s1, s2)
@@ -159,7 +114,6 @@ class STSWrapper(BaseWrapper):
             torch.save(self.model.encoder.state_dict(), path)
 
             print(f"epoch {e+1}, avg train loss: {avg_train_loss}, avg test loss: {avg_test_loss}, test pearson: {round(p[0], 3)}")
-
 
         elapsed_time = time.time() - start_time
         print(correlations)
