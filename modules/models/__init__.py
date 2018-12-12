@@ -1,28 +1,28 @@
 from .basic_classifier import BasicClassifier
 from .cosine_sim_sts_predictor import CosineSimSTSPredictor
-from .dependency_encoder_1 import DependencyEncoder1
-from .dependency_encoder_2 import DependencyEncoder2
-from .dependency_encoder_3 import DependencyEncoder3
+from .dep_encoder_1 import DEPEncoder1
+from .dep_encoder_1_lstm import DEPEncoder1LSTM
 from .euclid_sim_sts_predictor import EuclidSimSTSPredictor
 from .linear_block import LinearBlock
 from .pos_encoder_1 import POSEncoder1
 from .pos_encoder_1_lstm import POSEncoder1LSTM
 from .pos_encoder_2 import POSEncoder2
+from .pos_encoder_2_lstm import POSEncoder2LSTM
 from .sts_predictor import STSPredictor
 
 
 dependency_encoders = {
-    "1": DependencyEncoder1,
-    "2": DependencyEncoder2,
-    "3": DependencyEncoder3,
-    "pos": POSEncoder1,
-    "pos_lstm": POSEncoder1LSTM,
-    "pos2": POSEncoder2
+    "pos1": POSEncoder1,
+    "pos1_lstm": POSEncoder1LSTM,
+    "pos2": POSEncoder2,
+    "pos2_lstm": POSEncoder2LSTM,
+    "dep1": DEPEncoder1,
+    "dep1_lstm": DEPEncoder1LSTM
 }
 
 
-def create_sts_predictor(embedding_dim, batch_size, dependency_map, encoder_model, layers, drops, use_bias=False):
-    encoder = dependency_encoders[encoder_model](embedding_dim, batch_size, dependency_map)
+def create_sts_predictor(embedding_dim, batch_size, param_map, encoder_model, layers, drops, use_bias=False):
+    encoder = dependency_encoders[encoder_model](embedding_dim, batch_size, param_map)
     return STSPredictor(encoder, layers, drops)
 
 
