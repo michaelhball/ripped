@@ -4,6 +4,7 @@ import torch
 
 from pathlib import Path
 from random import shuffle
+from tqdm import tqdm
 
 from modules.models import create_classifier
 from modules.utilities import V
@@ -71,7 +72,7 @@ class DownstreamWrapper(BaseWrapper):
             self.model.training = True
             total_loss = 0.0
             shuffle(self.train_data)
-            for i, (x, y) in enumerate(self.train_data):
+            for i, (x, y) in tqdm(enumerate(self.train_data), total=len(self.train_data)):
                 self.model.zero_grad()
                 pred = self.model(self.encoder(x))
                 loss = loss_func(pred, V(y))

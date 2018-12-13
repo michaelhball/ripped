@@ -4,6 +4,7 @@ import torch
 
 from pathlib import Path
 from random import shuffle
+from tqdm import tqdm
 
 from modules.models import create_classifier
 from modules.utilities import V
@@ -12,12 +13,11 @@ from .base_wrapper import BaseWrapper
 
 
 class ProbingWrapper(BaseWrapper):
-    def __init__(self, name, saved_models, probing_task, train_data, val_data, test_data, encoder, layers, drops):
+    def __init__(self, name, saved_models, probing_task, train_data, test_data, encoder, layers, drops):
         self.name = name
         self.saved_models = saved_models
         self.probing_task = probing_task
         self.train_data = pickle.load(Path(train_data).open('rb'))
-        self.val_data = pickle.load(Path(val_data).open('rb'))
         self.test_data = pickle.load(Path(test_data).open('rb'))
         self.encoder = encoder
         self.layers, self.drops = layers, drops
@@ -42,11 +42,11 @@ class ProbingWrapper(BaseWrapper):
         self.model.eval()
         self.model.training = False
         total_loss = 0.0
-        for i, (y, x) in enumerate(self.val_data):
+        for i, (y, x) in enumerate(self.test_data):
             pred = self.model(self.encoder(x))
             total_loss += loss_func(pred, V(y)).item()
 
-        return total_loss / len(self.val_data)
+        return total_loss / len(self.test_data)
 
     def test_accuracy(self, load=False):
         if load:
@@ -72,7 +72,7 @@ class ProbingWrapper(BaseWrapper):
             self.model.training = True
             total_loss = 0.0
             shuffle(self.train_data)
-            for i, (y,x) in enumerate(self.train_data[:40000]):
+            for i, (y,x) in tqdm(enumerate(self.train_data), total=len(self.train_data)):
                 self.model.zero_grad()
                 pred = self.model(self.encoder(x))
                 loss = loss_func(pred, V(y))
