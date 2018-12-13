@@ -11,7 +11,6 @@ class EasyIterator():
         self.randomise = randomise
         self.fetch_data()
         self.reset()
-        self.train_data = self.data
     
     def __len__(self):
         return self.num_examples

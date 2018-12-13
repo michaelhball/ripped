@@ -61,9 +61,6 @@ class STSWrapper(BaseWrapper):
             preds.append(pred.item())
             scores.append((score-1)/4)
             info.append((i, (score-1)/4, pred.item()))
-
-        # preds = [(p*4)+1 for p in preds]
-        # scores = [(p*4)+1 for p in scores]
         
         pearson = pearsonr(preds, scores)
         spearman = spearmanr(preds, scores)

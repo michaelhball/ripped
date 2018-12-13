@@ -36,6 +36,7 @@ class POSLin(nn.Module):
             output, _ = torch.max(z, 0)
 
             if self.evaluate:
-                return output.detach().numpy(), [wr.detach().numpy() for wr in word_reps]
+                wes = [wr.detach().numpy() for wr in word_reps]
+                return output.detach().numpy(), wes
 
             return output
