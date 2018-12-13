@@ -323,7 +323,7 @@ if __name__ == "__main__":
     elif args.task == "data":
         we = load_glove('./data/glove.840B.300d.txt')
         nlp = spacy.load('en')
-        dr = SentEvalDataReader('./data/senteval_probing/sentence_length.txt')
+        dr = SentEvalDataReader('./data/senteval_probing/subj_number.txt')
         di = SentEvalDataIterator(dr, 'glove-wiki-gigaword-50', type_="tr", randomise=False)
         from random import shuffle
         train_data = di.all_data['tr']
@@ -333,19 +333,20 @@ if __name__ == "__main__":
         train_data_tree = []
         train_data_og = []
         for x in tqdm(train_data[:20000], total=20000):
+            label = 0 if x[0] == "NNS" else 1
             sent_tree = tokenise_sent_tree(we, nlp, x[1].replace("\"", ""))
             sent_og = tokenise_sent_og(we, nlp, x[1].replace("\"", ""))
-            train_data_tree.append((int(x[0]), sent_tree))
-            train_data_og.append((int(x[0]), sent_og))
-        pickle.dump(train_data_tree, Path('./data/senteval_probing/sentence_length_train_tree.pkl').open('wb'))
-        pickle.dump(train_data_og, Path('./data/senteval_probing/sentence_length_train_og.pkl').open('wb'))
+            train_data_tree.append((label, sent_tree))
+            train_data_og.append((label, sent_og))
+        pickle.dump(train_data_tree, Path('./data/senteval_probing/subj_number_train_tree.pkl').open('wb'))
+        pickle.dump(train_data_og, Path('./data/senteval_probing/subj_number_train_og.pkl').open('wb'))
         test_data_tree = []
         test_data_og = []
         for x in tqdm(test_data[:5000], total=5000):
-            label = 0 if x[0] == "PRES" else 1
+            label = 0 if x[0] == "NNS" else 1
             sent_tree = tokenise_sent_tree(we, nlp, x[1].replace("\"", ""))
             sent_og = tokenise_sent_og(we, nlp, x[1].replace("\"", ""))
-            test_data_tree.append((int(x[0]), sent_tree))
-            test_data_og.append((int(x[0]), sent_og))
-        pickle.dump(test_data_tree, Path('./data/senteval_probing/sentence_length_test_tree.pkl').open('wb'))
-        pickle.dump(test_data_og, Path('./data/senteval_probing/sentence_length_test_og.pkl').open('wb'))
+            test_data_tree.append((label, sent_tree))
+            test_data_og.append((label, sent_og))
+        pickle.dump(test_data_tree, Path('./data/senteval_probing/subj_number_test_tree.pkl').open('wb'))
+        pickle.dump(test_data_og, Path('./data/senteval_probing/subj_number_test_og.pkl').open('wb'))
