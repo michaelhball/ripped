@@ -1,121 +1,42 @@
 import argparse
 import gensim.downloader as api
+import matplotlib.pyplot as plt
+import numpy as np
 import pickle
 import spacy
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as Fs
 
 from pathlib import Path
+from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
 from modules.data_iterators import EasyIterator, SentEvalDataIterator
 from modules.data_readers import SentEvalDataReader
 from modules.models import create_encoder
-from modules.model_wrappers import BaselineWrapper, DownstreamWrapper, ProbingWrapper, STSWrapper, TuningWrapper
-from modules.utilities import all_dependencies, my_dependencies, plot_train_test_loss, tokenise_sent, universal_tags, V
+from modules.model_wrappers import BaselineWrapper, DownstreamWrapper, ProbingWrapper, STSWrapper
+from modules.utilities import *
 
 
 parser = argparse.ArgumentParser(description='PyTorch Dependency-Parse Encoding Model')
 parser.add_argument('--word_embedding_source', type=str, default='glove-wiki-gigaword-50', help='word embedding source to use')
 parser.add_argument('--word_embedding', type=str, default='glove_50', help='name of default word embeddings to use')
 parser.add_argument('--saved_models', type=str, default='./models', help='directory to save/load models')
-parser.add_argument('--encoder_model', type=str, default='3', help='id of desired encoder model')
-parser.add_argument('--data_dir', type=str, default='./data', help='directory where data is stored')
-parser.add_argument('--batch_size', type=int, default=1, help='batch size for training')
+parser.add_argument('--encoder_model', type=str, default='pos_tree', help='pos_lin/pos_tree/dep_tree')
 parser.add_argument('--num_epochs', type=int, default=10, help='number of epochs to train for')
-parser.add_argument('--model_name', type=str, default='sts_predictor', help='name of model to train')
+parser.add_argument('--model_name', type=str, default='999', help='name of model to train')
 parser.add_argument('--task', type=str, default='train', help='task out of train/test/evaluate')
 parser.add_argument('--baseline_type', type=str, default='pool', help='type of baseline model')
-parser.add_argument('--pool_type', type=str, default='max', help='type of pooling for baseline (if pool baseline)')
+parser.add_argument('--lr', type=float, default=6e-4, help='learning rate for whichever model is being trained')
+parser.add_argument('--wd', type=float, default=0, help='L2 regularization for training')
 args = parser.parse_args()
 
 
-def train_model(predictor, num_epochs, loss_func, opt_func, visualise=False, save=False):
-    """
-    Trains a model on STS dataset (optionally visualises loss and saves model).
-    Args:
-        predictor (BaseWrapper): model wrapper for model
-        num_epochs (int): Number of training epochs
-        loss_func (): loss function for training
-        opt_func (): pytorch optimiser for training
-        visualise (bool): indicator whether or not to plot loss
-        save (bool): indicator whether or not to save the model
-    Returns:
-        None
-    """
-    train_losses, test_losses = predictor.train(loss_func, opt_func, num_epochs=num_epochs)
-    if visualise:
-        plot_train_test_loss(train_losses, test_losses, save_file=f'./data/sick/loss_plots/{args.model_name}.png')
-    if save:
-        predictor.save()
-
-
-def get_embedding_at_node(node, word):
-    if node.text == word:
-        return node.embedding
-    for c in node.chidren:
-        val = get_embedding_at_node(c, word)
-        if not val is None:
-            return val
-    return None
-
-
-def sim(e1, e2):
-    from sklearn.metrics.pairwise import cosine_similarity
-    return cosine_similarity(e1, e2)[0][0]
-
-
-def phrase_representation(encoder, we, nlp, phrase):
-    return encoder(tokenise_sent(we, nlp, phrase)).representation
-
-
-def doot(encoder, node, sentence_rep): # this gets nodes, not actual words - also useful though
-    print(node.text, sim(sentence_rep, node.representation))
-    for c in node.chidren:
-        doot(encoder, c, sentence_rep)
-
-
-def evaluate_sentence(encoder):
+def evaluate_sentences(encoder):
     encoder.evaluate = True
     we = api.load(args.word_embedding_source)
     nlp = spacy.load('en')
-
-
-    # y = phrase_representation(encoder, we, nlp, "The dog was running in the park")
-    # z = phrase_representation(encoder, we, nlp, "The dog was playing in the park")
-    # a = phrase_representation(encoder, we, nlp, "running")
-    # b = phrase_representation(encoder, we, nlp, "playing")
-    # print(sim(y,z))
-    # print(sim(y-a+b,z))
-    # print(sim(z-b+a,y))
-
-    # c = phrase_representation(encoder, we, nlp, "The child was running in the park")
-    # d = phrase_representation(encoder, we, nlp, "The dog was running in the park")
-    # e = phrase_representation(encoder, we, nlp, "The child")
-    # f = phrase_representation(encoder, we, nlp, "The dog")
-    # print(sim(c,d))
-    # print(sim(c-e+f,d))
-    # print(sim(d-f+e,c))
-
-    # g = phrase_representation(encoder, we, nlp, "The dog was running in the field")
-    # h = phrase_representation(encoder, we, nlp, "The dog was running in the sand")
-    # i = phrase_representation(encoder, we, nlp, "in the field")
-    # j = phrase_representation(encoder, we, nlp, "in the sand")
-    # print(sim(g,h))
-    # print(sim(g-i+j,h))
-    # print(sim(h-j+i,g))
-
-    k = phrase_representation(encoder, we, nlp, "A group of friends are riding the current in a raft")
-    l = phrase_representation(encoder, we, nlp, "A group of friends are surfing the current in a raft")
-    m = phrase_representation(encoder, we, nlp, "are riding")
-    n = phrase_representation(encoder, we, nlp, "are surfing")
-    # print(sim(k,l))
-    # print(sim(k-m+n,l))
-    # print(sim(l-n+m,k))
-
-    ############################################
-    # KEEP THIS HERE TO PUT IN MY RESULTS
     o = phrase_representation(encoder, we, nlp, "Some penguins are riding the current in a raft")
     p = phrase_representation(encoder, we, nlp, "A group of dogs are riding the human as a ship")
     pp = phrase_representation(encoder, we, nlp, "A group of dogs are riding the human as a mule")
@@ -129,64 +50,12 @@ def evaluate_sentence(encoder):
     print(sim(q,r))
     print(sim(q,s))
     print(sim(t,u))
-    ############################################
 
-    # tree = encoder(tokenise_sent(we, nlp, "A group of friends are riding the current in a raft"))
-    # print(sim(k, get_embedding_at_node(tree, "are riding")))
-    # tree = encoder(tokenise_sent(we, nlp, "A group of friends are surfing the current in a raft"))
-    # print(sim(l, get_embedding_at_node(tree, "are surfing")))
+    def phrase_representation(encoder, we, nlp, phrase):
+        return encoder(tokenise_sent(we, nlp, phrase)).representation
 
-
-    # sne(encoder)
-
-
-def sne(encoder):
-    from sklearn.manifold import TSNE
-    import matplotlib.pyplot as plt
-
-    encoder.evaluate = True
-    we = api.load(args.word_embedding_source)
-    nlp = spacy.load('en')
-    sentences = {
-        "d1": "dog",
-        "d2": "dogs",
-        "d3": "two dogs",
-        "d4": "two beautiful dogs",
-        "d5": "two dogs are playing",
-        "d6": "two beautiful dogs are playing",
-        "d7": "two dogs are playing on the beach",
-        "d8": "two beautiful dogs are playing on the beach",
-        "c1": "cat",
-        "c2": "cats",
-        "c3": "two cats",
-        "c4": "two beautiful cats",
-        "c5": "two cats are playing",
-        "c6": "two beautiful cats are playing",
-        "c7": "two cats are playing on the beach",
-        "c8": "two beautiful cats are playing on the beach",
-    }
-    
-    labels = []
-    reprs = []
-    for l, s in sentences.items():
-        labels.append(l)
-        reprs.append(phrase_representation(encoder, we, nlp, s)[0])
-    
-    print(reprs[0])
-    
-    tsne_model = TSNE(perplexity=40, n_components=2, init='pca', n_iter=2500, random_state=23)
-    new_values = tsne_model.fit_transform(reprs)
-
-    x, y = [], []
-    for val in new_values:
-        x.append(val[0])
-        y.append(val[1])
-    
-    plt.figure(figsize=(10, 10))
-    for i in range(len(x)):
-        plt.scatter(x[i], y[i])
-        plt.annotate(labels[i], xy=(x[i], y[i]), xytext=(5,2), textcoords='offset points', ha='right', va='bottom')
-    plt.show()
+    def sim(e1, e2):
+        return cosine_similarity(e1, e2)[0][0]
 
 
 def test_similarity(encoder):
@@ -215,7 +84,7 @@ def test_similarity(encoder):
     return sims
 
 
-def nearest_neighbours(encoder, test_di, test_data, sent, k=10):
+def nearest_neighbours(encoder, test_di, test_data, sentences, k=20):
     """
     Gets the nearest neighbours from the SICK test dataset to 
         a given sentence (not necessarily in dataset).
@@ -235,16 +104,26 @@ def nearest_neighbours(encoder, test_di, test_data, sent, k=10):
         encodings[s1] = encoder(x[0])
         encodings[s2] = encoder(x[1])
 
-    we = api.load(args.word_embedding_source)
-    nlp = spacy.load('en')
-    enc = encoder(tokenise_sent(we, nlp, sent))
-    neighbours = []
-    for sent, emb in encodings.items():
-        cosine_sim = F.cosine_similarity(enc, emb).item()
-        neighbours.append((sent, cosine_sim))
-    neighbours = sorted(neighbours, key=lambda x: x[1], reverse=True)
+    if args.word_embedding == ('glove_300'):
+        from modules.utilities import load_glove
+        we = load_glove('./data/glove.840B.300d.txt')
+    else:
+        we = api.load(args.word_embedding_source)
 
-    return neighbours[:k]
+    nlp = spacy.load('en')
+    sent_neighbours = []
+    for s in sentences:
+        if args.encoder_model == "pos_lin":
+            enc = encoder(tokenise_sent_og(we, nlp, s))
+        else:
+            enc = encoder(tokenise_sent_tree(we, nlp, s))
+        neighbours = []
+        for sent, emb in encodings.items():
+            # cosine_sim = F.cosine_similarity(enc, emb).item()
+            cosine_sim = cosine_similarity(enc, emb)[0][0]
+            neighbours.append((sent, round(cosine_sim,3)))
+        print('\n'+s)
+        print(sorted(neighbours, key=lambda x: x[1], reverse=True)[:k])
 
 
 def worst_predictions(predictor, test_data, k=10):
@@ -259,271 +138,214 @@ def worst_predictions(predictor, test_data, k=10):
     worst_predictions = []
     for x in info[:k]:
         example = test_data[x[0]]
-        s1 = example[0]
-        s2 = example[1]
+        s1, s2 = example[0], example[1]
         worst_predictions.append((x[1], x[2], s1, s2))
+
+    print(worst_predictions)
+
+
+def get_node(node, word, dep):
+    if node.text == word and node.dep == dep:
+        return node
+    for c in node.chidren:
+        n = get_node(c, word, dep)
+        if not n is None:
+            return n
+    return None
+
+
+def create_plot(save_file, title, spans, percentages):
+    fig = plt.figure()
+    plt.xticks(np.arange(len(spans)), spans, rotation=0)
+    plt.bar(spans, percentages)
+    plt.ylabel('%')
+    plt.title(title)
+    plt.tight_layout()
+    fig.savefig(save_file)
+
+
+def get_token_span(token):
+    lefts, rights = list(token.lefts), list(token.rights)
+    leftmost_idx, rightmost_idx = token.i, token.i
+    while lefts:
+        l = lefts.pop()
+        if l.i < leftmost_idx:
+            leftmost_idx = l.i
+        lefts.extend(list(l.lefts))
+    while rights:
+        l = rights.pop()
+        if l.i > rightmost_idx:
+            rightmost_idx = l.i
+        rights.extend(list(l.rights))
+
+    return leftmost_idx, rightmost_idx
+
+
+def create_pos_lin_visualisations(save_file, sentence, sentence_embeddings, encoder):
+    nlp = spacy.load('en')
+    sent = list(nlp(str(sentence).lower()).sents)[0]
+    sentence_encoding, word_embeddings = encoder(sentence_embeddings)
+    nonzeros = sentence_encoding[0].nonzero()[0]
+    tokens, percentages = [], []
+    for we, t in zip(word_embeddings, sent):
+        tokens.append(f'{t.text}\n{t.i}')
+        percentages.append((sentence_encoding[0][nonzeros]==we[0][nonzeros]).sum() / float(len(nonzeros)))
     
-    return worst_predictions
+    create_plot(f"{save_file}_overall.png", f"\"{str(sent)}\"", tokens, percentages)
 
 
-def bert_encoding(model, tokenizer, sentence):
-    tokens = tokenizer.tokenize(sentence)
-    indices = tokenizer.convert_tokens_to_ids(tokens)
-    tensors = torch.tensor([indices])
-    segments = torch.tensor([0 for i in range(len(indices))])
-    _, pooled = model(tensors, segments)
+def create_pos_tree_visualisations(save_file, sentence, sentence_tree, encoder):
+    nlp = spacy.load('en')
+    sent = list(nlp(str(sentence).lower()).sents)[0]
+    encoded_tree = encoder(sentence_tree)
 
-    return pooled
+    for token in sent:
+        if list(token.children):
+            l,r = get_token_span(token)
+            token_span = str(sent[l:r+1])
+            node = get_node(encoded_tree, token.text, token.dep_)
+            representation = node.representation[0]
+            nonzeros = representation.nonzero()[0]
+            spans, percentages, span_indices = [], [], []
+            
+            for child_token in token.children:
+                child_span_left, child_span_right = get_token_span(child_token)
+                spans.append(f'{str(sent[child_span_left:child_span_right+1])}\n{child_span_left}:{child_span_right}')
+                span_indices.append((child_span_left, child_span_right))
+                child_node = get_node(encoded_tree, child_token.text, child_token.dep_)
+                percentages.append((representation[nonzeros] == child_node.representation[0][nonzeros]).sum() / float(len(nonzeros)))
+            
+            n_list = [n for n, i in enumerate(span_indices) if token.i > i[1]]
+            n = n_list[-1]+1 if n_list else 1
+            spans.insert(n, f'{token.text}\n{token.i}')
+            percentages.insert(n, (representation[nonzeros] == node.embedding[0][nonzeros]).sum() / float(len(nonzeros)))
+            # plots[token.i] = create_plot(f"relative importance of dependents to '{token.text}' encoding", spans, percentages)
+            create_plot(f'{save_file}_{token.i}.png', f"relative importance of dependents to '{token.text}' encoding", spans, percentages)
 
-
-def test_bert():
-    from pytorch_pretrained_bert import BertTokenizer, BertModel
-    from scipy.stats.stats import pearsonr, spearmanr
-    # tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    # model = BertModel.from_pretrained('bert-base-uncased')
-    # model.eval()
-
-    # loss_func = nn.MSELoss()
-    # test_data = pickle.load(Path('./data/sick/test.pkl').open('rb'))
-    # total_loss = 0.0
-    # preds, scores, info = [], [], []
-    # for i, (s1, s2, score) in tqdm(enumerate(test_data)):
-    #     pooled1 = bert_encoding(model, tokenizer, s1)
-    #     pooled2 = bert_encoding(model, tokenizer, s2)
-    #     pred = F.cosine_similarity(pooled1, pooled2)
-    #     total_loss += loss_func(pred, V((float(score)-1)/4)).item()
-    #     preds.append(pred.item())
-    #     scores.append((float(score)-1)/4)
-    #     info.append((s1, s2, float(score), pred.item()))
-    
-    # avg_loss = total_loss / len(test_data)
-    # print(avg_loss)
-    
-    # pickle.dump(preds, Path('./preds.pkl').open('wb'))
-    # pickle.dump(scores, Path('./scores.pkl').open('wb'))
-    # pickle.dump(info, Path('./info.pkl').open('wb'))
-
-    preds = pickle.load(Path('./preds.pkl').open('rb'))
-    scores = pickle.load(Path('./scores.pkl').open('rb'))
-    info = pickle.load(Path('./info.pkl').open('rb'))
-
-    pearson = pearsonr(preds, scores)
-    spearman = spearmanr(preds, scores)
-    avg_loss = 0
-
-    return pearson, spearman, info, avg_loss
-
-
-def x(score):
-    if score < 0.2:
-        return 0
-    elif score < 0.4:
-        return 1
-    elif score < 0.6:
-        return 2
-    elif score < 0.8:
-        return 3
-    else:
-        return 4
+    percentage_map = {}
+    encoding = encoded_tree.representation[0]
+    nonzeros = encoding.nonzero()[0]
+    next_children = [encoded_tree]
+    while next_children:
+        c = next_children.pop(0)
+        percentage_map[c.text] = (encoding[nonzeros] == c.embedding[0][nonzeros]).sum() / float(len(nonzeros))
+        next_children += c.chidren
+    tokens = [f'{t.text}\n{t.i}' for t in sent]
+    percentages = [percentage_map[t.text] for t in list(sent)]
+    create_plot(f"{save_file}_overall.png", f"\"{str(sent)}\"", tokens, percentages)
 
 
 if __name__ == "__main__":
-
     embedding_dim = int(args.word_embedding.split('_')[1])
-    batch_size = 1
-    sick_data = args.data_dir + '/sick'
-    probing_data = args.data_dir + '/senteval_probing'
+    layers = [2*embedding_dim, 250, 1]
+    drops = [0, 0]
 
-    # #######################################
-    # # # param groups for ENC-3 model. USED FOR TRYING VARIOUS LR SCHEMES.
-    # # pg1 = [{'params': predictor.model.encoder.lstm.parameters(), 'lr': lr}]
-    # # pg2 = [{'params': ps, 'lr': lr} for ps in predictor.model.encoder.params.parameters()]
-    # # param_groups = pg1 + pg2
-    # # opt_func = opt(param_groups)
-    # #######################################
+    sick_train_data = './data/sick/train_data'
+    sick_test_data = './data/sick/test_data'
+    train_data_raw = pickle.load(Path('./data/sick/train.pkl').open('rb'))
+    test_data_raw = pickle.load(Path('./data/sick/test.pkl').open('rb'))
+    di_suffix = {"pos_lin": "og", "pos_tree": "trees", "dep_tree": "trees"}
+    train_di = EasyIterator(f'{sick_train_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl')
+    test_di = EasyIterator(f'{sick_test_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl', randomise=False)
 
-    if args.task == "train" or args.task == "worst_predictions" or args.task == "tune_similarity_predictor":
-        # train_di = EasyIterator(sick_data + f'/train_data_{args.word_embedding}_trees.pkl')
-        # test_di = EasyIterator(sick_data + f'/test_data_{args.word_embedding}_trees.pkl', randomise=False)
-        layers = [2*embedding_dim, 250, 1]
-        drops = [0, 0]
-        # predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, batch_size, my_dependencies, train_di, test_di, args.encoder_model, layers=layers, drops=drops)
-        # predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, batch_size, my_dependencies, train_di, test_di, args.encoder_model)
+    if args.task == "train":
+        predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, train_di, test_di, args.encoder_model, layers=layers, drops=drops)
+        loss_func = nn.MSELoss()
+        opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr, weight_decay=args.wd, amsgrad=False)
+        train_losses, test_losses = predictor.train(loss_func, opt_func, args.num_epochs)
+        # plot_train_test_loss(train_losses, test_losses, save_file=f'./data/sick/loss_plots/{args.model_name}.png')
 
-        train_di = EasyIterator(f'./data/sick/train_data_{args.word_embedding}_og.pkl')
-        test_di = EasyIterator(f'./data/sick/test_data_{args.word_embedding}_og.pkl', randomise=False)
-        predictor = STSWrapper(args.    model_name, args.saved_models, embedding_dim, batch_size, universal_tags, train_di, test_di, "pos", layers=layers, drops=drops)
-        # predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, batch_size, universal_tags, train_di, test_di, "pos")
+    elif args.task == "train_baseline":
+        loss_func = nn.MSELoss()
+        train_data = f'{sick_train_data}_{args.word_embedding}_baseline.pkl'
+        test_data = f'{sick_test_data}_{args.word_embedding}_baseline.pkl'
+        predictor = BaselineWrapper(args.model_name, args.saved_models, train_data, test_data, layers, drops, args.baseline_type, embedding_dim=embedding_dim)
+        opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr)
+        predictor.train(loss_func, opt_func, args.num_epochs)
+        predictor.save()
+        p, s, i = predictor.test_correlation()
+        print(p[0], s[0])
 
-        if args.task == "train":
-            loss_func = nn.MSELoss()
-            opt_func = torch.optim.Adam(predictor.model.parameters(), lr=1e-4, weight_decay=0, amsgrad=False)
-            # opt_func = torch.optim.Adagrad(predictor.model.parameters(), lr=0.01, weight_decay=0)
-            # opt_func = torch.optim.SGD(predictor.model.parameters(), lr=0.01, weight_decay=0)
-            train_model(predictor, args.num_epochs, loss_func, opt_func, visualise=True, save=True)
-            pearson, spearman, info = predictor.test_correlation()
-            print(pearson, spearman)
+    elif args.task == "worst_predictions":
+        predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, train_di, test_di, args.encoder_model, layers=layers, drops=drops)
+        worst_predictions(predictor, test_data_raw, k=10)
 
-        if args.task == "worst_predictions":
-            test_data = pickle.load(Path(sick_data+'/test.pkl').open('rb'))
-            print(worst_predictions(predictor, test_data))
-        
-    elif args.task == "nearest_neighbours" or args.task == "test_similarity" or args.task == "evaluate_sentence":
-        encoder = create_encoder(embedding_dim, batch_size, my_dependencies, args.encoder_model)
-        path = args.saved_models+f'/{args.model_name}_encoder.pt'
-        encoder.load_state_dict(torch.load(path))
+    elif args.task == "nearest_neighbours":
+        encoder = create_encoder(embedding_dim, args.encoder_model)
+        encoder.load_state_dict(torch.load(f'{args.saved_models}/{args.model_name}_encoder.pt'))
         encoder.eval()
+        s1 = "A woman is slicing potatoes"
+        s2 = "Two men are playing guitar"
+        s3 = "A boy is waving at some young runners from the ocean"
+        nearest_neighbours(encoder, test_di, test_data_raw, [s1, s2, s3], k=20)
 
-        if args.task == "nearest_neighbours":
-            test_data = pickle.load(Path(sick_data+'/test.pkl').open('rb'))
-            test_di = EasyIterator(sick_data+f'/test_data_{args.word_embedding}.pkl', randomise=False)
-            sent = "A guy is mowing the lawn"
-            print(nearest_neighbours(encoder, test_di, test_data, sent))
-        elif args.task == "test_similarity":
-            print(test_similarity(encoder))
-        elif args.task == "evaluate_sentence":
-            evaluate_sentence(encoder)
-    
-    elif args.task == "test_classification":
-        train_data = f'./data/sst/train_data_{args.word_embedding}_binary.pkl'
-        test_data = f'./data/sst/test_data_{args.word_embedding}_binary.pkl'
+    elif args.task == "visualise_encoding":
+        encoder = create_encoder(embedding_dim, args.encoder_model)
+        encoder.load_state_dict(torch.load(f'{args.saved_models}/{args.model_name}_encoder.pt'))
+        encoder.eval()
+        encoder.evaluate = True
+        s1, s2, _ = test_data_raw[381]
+        st1, st2, _ = test_di.data[381]
+        if args.encoder_model == "pos_lin":
+            create_pos_lin_visualisations('./visualisations/s5_pos_lin', s1, st1, encoder)
+            create_pos_lin_visualisations('./visualisations/s6_pos_lin', s2, st2, encoder)
+        elif args.encoder_model == "pos_tree":
+            create_pos_tree_visualisations('./visualisations/s5_pos_tree', s1, st1, encoder)
+            create_pos_tree_visualisations('./visualisations/s6_pos_tree', s2, st2, encoder)
+
+    elif args.task == "test_sst":
+        train_data = f'./data/sst/train_data_{args.word_embedding}_og.pkl'
+        test_data = f'./data/sst/test_data_{args.word_embedding}_og.pkl'
         loss_func = nn.CrossEntropyLoss()
-        opt = torch.optim.Adam
-        lr = 0.001
-        weight_decay = 0
-        num_classes = 2
-        layers = [50, 250, num_classes]
+        layers = [embedding_dim, 500, 5]
         drops = [0, 0]
-        encoder = create_encoder(embedding_dim, batch_size, my_dependencies, args.encoder_model)
-        wrapper = DownstreamWrapper(args.model_name, args.saved_models, "sst_classification", train_data, test_data, encoder, layers, drops)
-        opt_func = opt(wrapper.model.parameters(), lr=lr, weight_decay=weight_decay)
+        encoder = create_encoder(embedding_dim, args.encoder_model)
+        classifier = DownstreamWrapper(args.model_name, args.saved_models, "sst_classification", train_data, test_data, encoder, layers, drops)
+        opt_func = torch.optim.Adagrad(classifier.model.parameters(), lr=args.lr, weight_decay=args.wd)
+        classifier.train(loss_func, opt_func, 15)
+        classifier.save()
+        print(classifier.test_accuracy())
+
+    elif args.task.startswith("probe"):
+        probing_task = args.task.split("_", 1)[1]
+        train_data = f'./data/senteval_probing/{probing_task}_train_og.pkl'
+        test_data = f'./data/senteval_probing/{probing_task}_test_og.pkl'
+        loss_func = nn.CrossEntropyLoss()
+        layers = [embedding_dim, 200, 6]
+        drops = [0, 0]
+        encoder = create_encoder(embedding_dim, args.encoder_model)
+        wrapper = ProbingWrapper(args.model_name, args.saved_models, probing_task, train_data, test_data, encoder, layers, drops)
+        opt_func = torch.optim.SGD(wrapper.model.parameters(), lr=args.lr, weight_decay=args.wd)
         wrapper.train(loss_func, opt_func, 10)
         wrapper.save()
         print(wrapper.test_accuracy())
 
-    elif args.task.startswith("probe"):
-        probing_task = args.task.split("_", 1)[1]
-        path = probing_data + f'/{probing_task}_'
-        loss_func = nn.CrossEntropyLoss()
-        opt = torch.optim.SGD
-        lr = 0.01
-        weight_decay = 5e-3
-        num_classes = 2
-        layers = [50, 200, num_classes]
-        drops = [0, 0, 0]
-        encoder = create_encoder(embedding_dim, batch_size, my_dependencies, args.encoder_model)
-        wrapper = ProbingWrapper(args.model_name, args.saved_models, probing_task, path+'tr.pkl', path+'va.pkl', path+'te.pkl', encoder, layers, drops)
-        opt_func = opt(wrapper.model.parameters(), lr=lr, weight_decay=weight_decay)
-        wrapper.train(loss_func, opt_func, 5)
-        wrapper.save()
-        print(wrapper.test_accuracy())
-
-    elif args.task == "test_baseline":
-        train_data = sick_data + f'/train_data_{args.word_embedding}_baseline.pkl'
-        test_data = sick_data + f'/test_data_{args.word_embedding}_baseline.pkl'
-        loss_func = nn.MSELoss()
-        layers = [2*embedding_dim, 250, 1]
-        drops = [0, 0]
-        if args.baseline_type == "pool":
-            predictor = BaselineWrapper(args.model_name, args.saved_models, train_data, test_data, layers, drops, args.baseline_type, args.pool_type)
-            opt_func = torch.optim.SGD(predictor.model.parameters(), lr=0.01)
-        elif args.baseline_type.startswith("lstm"):
-            predictor = BaselineWrapper(args.model_name, args.saved_models, train_data, test_data, layers, drops, args.baseline_type, embedding_dim=embedding_dim, num_layers=1)
-            opt_func = torch.optim.Adam(predictor.model.parameters(), lr=0.01)
-        predictor.train(loss_func, opt_func, 15)
-        predictor.save()
-        pearson, spearman, info = predictor.test_correlation()
-        print(pearson, spearman)
-    
-    elif args.task == "test_sota":
-        p, s, info, avg_loss = test_bert()
-        print(p, s, avg_loss)
-
     elif args.task == "data":
-        # dr = SentEvalDataReader('./data/senteval_probing/sentence_length.txt')
-        # di = SentEvalDataIterator(dr, 'glove-wiki-gigaword-50', type_="tr", randomise=False)
-        # data = [[int(example[0]), di.tokenise_sent(example[1])] for example in di.data]
-        # pickle.dump(data, Path('./data/senteval_probing/sentence_length_tr.pkl').open('wb'))
-        # di.change_type("va")
-        # data = [[int(example[0]), di.tokenise_sent(example[1])] for example in di.data]
-        # pickle.dump(data, Path('./data/senteval_probing/sentence_length_va.pkl').open('wb'))
-
-        # # past_present
-        # dr = SentEvalDataReader('./data/senteval_probing/past_present.txt')
-        # di = SentEvalDataIterator(dr, 'glove-wiki-gigaword-50', type_="tr", randomise=False)
-        # data = [[0 if example[0] == "PRES" else 1, di.tokenise_sent(example[1].replace("\"", ""))] for example in di.data]
-        # pickle.dump(data, Path('./data/senteval_probing/past_present_tr.pkl').open('wb'))
-        # di.change_type("va")
-        # data = [[0 if example[0] == "PRES" else 1, di.tokenise_sent(example[1].replace("\"", ""))] for example in di.data]
-        # pickle.dump(data, Path('./data/senteval_probing/past_present_va.pkl').open('wb'))
-        # di.change_type("te")
-        # data = [[0 if example[0] == "PRES" else 1, di.tokenise_sent(example[1].replace("\"", ""))] for example in di.data]
-        # pickle.dump(data, Path('./data/senteval_probing/past_present_te.pkl').open('wb'))
-
-        # # # bigram shift
-        # dr = SentEvalDataReader('./data/senteval_probing/bigram_shift.txt')
-        # di = SentEvalDataIterator(dr, 'glove-wiki-gigaword-50', type_="tr", randomise=False)
-        # data = [[0 if example[0] == "I" else 1, di.tokenise_sent(example[1].replace("\"", ""))] for example in di.data]
-        # pickle.dump(data, Path('./data/senteval_probing/bigram_shift_tr.pkl').open('wb'))
-        # di.change_type("va")
-        # data = [[0 if example[0] == "I" else 1, di.tokenise_sent(example[1].replace("\"", ""))] for example in di.data]
-        # pickle.dump(data, Path('./data/senteval_probing/bigram_shift_va.pkl').open('wb'))
-        # di.change_type("te")
-        # data = [[0 if example[0] == "I" else 1, di.tokenise_sent(example[1].replace("\"", ""))] for example in di.data]
-        # pickle.dump(data, Path('./data/senteval_probing/bigram_shift_te.pkl').open('wb'))
-
-        # we = api.load(args.word_embedding_source)
-        # nlp = spacy.load('en')
-        # train_data = pickle.load(Path('./data/sst/train_data.pkl').open('rb'))
-        # test_data = pickle.load(Path('./data/sst/test_data.pkl').open('rb'))
-        # train_data = [(tokenise_sent(we, nlp, x[0].replace('\"', "")), x[1]) for x in train_data]
-        # print('done train')
-        # test_data = [(tokenise_sent(we, nlp, x[0].replace('\"', "")), x[1]) for x in test_data]
-        # pickle.dump(train_data, Path('./data/sst/train_data_glove_50.pkl').open('wb'))
-        # pickle.dump(test_data, Path('./data/sst/test_data_glove_50.pkl').open('wb'))
-
-        # from modules.utilities import EmbeddingNode
-        # train = pickle.load(Path('./data/sick/train.pkl').open('rb'))
-        # test = pickle.load(Path('./data/sick/test.pkl').open('rb'))
-        # nlp = spacy.load('en')
-        # we = api.load('fasttext-wiki-news-subwords-300')
-        # new_train, new_test = [], []
-        # for x in tqdm(iterable=train, total=len(train)):
-        #     new_node1 = EmbeddingNode(we, list(nlp(str(x[0])).sents)[0].root)
-        #     new_node2 = EmbeddingNode(we, list(nlp(str(x[1])).sents)[0].root)
-        #     new_train.append((new_node1, new_node2, float(x[2])))
-        # for x in tqdm(iterable=test, total=len(test)):
-        #     new_node1 = EmbeddingNode(we, list(nlp(str(x[0])).sents)[0].root)
-        #     new_node2 = EmbeddingNode(we, list(nlp(str(x[1])).sents)[0].root)
-        #     new_test.append((new_node1, new_node2, float(x[2])))
-        # pickle.dump(new_train, Path('./data/sick/train_data_fasttext_300_pos.pkl').open('wb'))
-        # pickle.dump(new_test, Path('./data/sick/test_data_fasttext_300_pos.pkl').open('wb'))
-            
-        # import numpy as np
-        # nlp = spacy.load('en')
-        # we = {}
-        # with Path('./data/glove.840b.300d.txt').open('r') as f:
-        #     for line in tqdm(f, total=2196018):
-        #         l = line.split(' ')
-        #         we[l[0]] = np.asarray(l[1:], dtype=np.float32)
-        # print(f'loaded word embeddings, #={len(we)}')
-        # train = pickle.load(Path('./data/sick/train.pkl').open('rb'))
-        # test = pickle.load(Path('./data/sick/test.pkl').open('rb'))
-        # new_train, new_test = [], []
-        # for x in tqdm(iterable=train, total=len(train)):
-        #     s1 = [(t.pos_, we[t.text] if t.text in we else we['unk']) for t in nlp(str(x[0]))]
-        #     s2 = [(t.pos_, we[t.text] if t.text in we else we['unk']) for t in nlp(str(x[1]))]
-        #     new_train.append((s1,s2,float(x[2])))
-        # print(new_train[0])
-        # pickle.dump(new_train, Path('./data/sick/train_data_glove_300_og.pkl').open('wb'))
-        # for x in tqdm(iterable=test, total=len(test)):
-        #     s1 = [(t.pos_, we[t.text] if t.text in we else we['unk']) for t in nlp(str(x[0]))]
-        #     s2 = [(t.pos_, we[t.text] if t.text in we else we['unk']) for t in nlp(str(x[1]))]
-        #     new_test.append((s1,s2,float(x[2])))
-        # print(new_test[0])
-        # pickle.dump(new_test, Path('./data/sick/test_data_glove_300_og.pkl').open('wb'))
-
-
-
-
-        None
+        we = load_glove('./data/glove.840B.300d.txt')
+        nlp = spacy.load('en')
+        dr = SentEvalDataReader('./data/senteval_probing/sentence_length.txt')
+        di = SentEvalDataIterator(dr, 'glove-wiki-gigaword-50', type_="tr", randomise=False)
+        from random import shuffle
+        train_data = di.all_data['tr']
+        test_data = di.all_data['te']
+        shuffle(train_data)
+        shuffle(test_data)
+        train_data_tree = []
+        train_data_og = []
+        for x in tqdm(train_data[:20000], total=20000):
+            sent_tree = tokenise_sent_tree(we, nlp, x[1].replace("\"", ""))
+            sent_og = tokenise_sent_og(we, nlp, x[1].replace("\"", ""))
+            train_data_tree.append((int(x[0]), sent_tree))
+            train_data_og.append((int(x[0]), sent_og))
+        pickle.dump(train_data_tree, Path('./data/senteval_probing/sentence_length_train_tree.pkl').open('wb'))
+        pickle.dump(train_data_og, Path('./data/senteval_probing/sentence_length_train_og.pkl').open('wb'))
+        test_data_tree = []
+        test_data_og = []
+        for x in tqdm(test_data[:5000], total=5000):
+            label = 0 if x[0] == "PRES" else 1
+            sent_tree = tokenise_sent_tree(we, nlp, x[1].replace("\"", ""))
+            sent_og = tokenise_sent_og(we, nlp, x[1].replace("\"", ""))
+            test_data_tree.append((int(x[0]), sent_tree))
+            test_data_og.append((int(x[0]), sent_og))
+        pickle.dump(test_data_tree, Path('./data/senteval_probing/sentence_length_test_tree.pkl').open('wb'))
+        pickle.dump(test_data_og, Path('./data/senteval_probing/sentence_length_test_og.pkl').open('wb'))

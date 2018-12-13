@@ -117,3 +117,5 @@ dmypy.json
 /baseline_models/
 /models/
 data/
+.vscode/
+/visualisations/

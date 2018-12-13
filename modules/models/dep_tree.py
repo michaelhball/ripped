@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from modules.utilities import my_dependencies, universal_tags
-s
+
 
 class DEPTree(nn.Module):
     def __init__(self, embedding_dim, evaluate=False):
