@@ -15,8 +15,12 @@ def convert(embeddings, node):
         convert(embeddings, c)
 
 
-def tokenise_sent(we, nlp, sentence):
+def tokenise_sent_tree(we, nlp, sentence):
     return EmbeddingNode(we, list(nlp(sentence).sents)[0].root)
+
+
+def tokenise_sent_og(we, nlp, sentence):
+    return [(t.pos_, we[t.text] if t.text in we else we['unk']) for t in nlp(str(sentence))]
 
 
 def tokenise_and_embed(we_source, data):

@@ -42,7 +42,6 @@ my_dependencies = {
     'parataxis': 18, 'vocative': 19, 'xcomp': 20
 }
 
-
 # The new mapping coming from English-specific dependencies
 my_dependencies = {
     'advmod': 0, 'npadvmod': 0, 'advcl': 0, 'pobj': 1, 'pcomp': 1,
@@ -58,12 +57,11 @@ my_dependencies = {
 all_dependencies = {
     'acl': 0, 'acomp': 1, 'advcl': 2, 'advmod': 3, 'agent': 4, 'amod': 5, 
     'appos': 6, 'attr': 7, 'aux': 8, 'auxpass': 9, 'case': 10, 'cc': 11, 
-    'ccomp': 12, 'compound': 13, 'conj': 14, 'csubj': 15, 'csubjpass': 16, 
+    'ccomp': 12, 'compound': 13, 'conj': 14, 'csubj': 15, 'npadvmod': 16, 
     'dative': 17, 'dep': 18, 'det': 19, 'dobj': 20, 'expl': 21, 'intj': 22, 
-    'mark': 23, 'meta': 24, 'neg': 25, 'npmod': 26, 'nsubj': 27, 'nsubjpass': 28, 
-    'nummod': 29, 'oprd': 30, 'parataxis': 31, 'pcomp': 32, 'pobj': 33, 
-    'poss': 34, 'preconj': 35, 'predet': 36, 'prep': 37, 'prt': 38, 'punct': 39, 
-    'quantmod': 40, 'relcl': 41, 'root': 42, 'xcomp': 43
+    'mark': 23, 'nmod': 24, 'neg': 25, 'xcomp': 26, 'nsubj': 27, 'nsubjpass': 28, 
+    'nummod': 29, 'oprd': 30, 'relcl': 31, 'pcomp': 32, 'pobj': 33, 
+    'poss': 34, 'quantmod': 35, 'punct': 36, 'prep': 37, 'prt': 38,
 }
 
 def get_my_dependencies():
@@ -93,12 +91,37 @@ def get_my_dependencies():
     
     return ds
 
-if __name__ == "__main__":
-    count = 0
-    ds = {}
-    for d in english_dependencies:
-        if d not in ds.keys():
-            ds[d] = count
-            count += 1
 
-    print(ds)
+my_dependencies = {
+     'aux': 0, 'cop': 0, 'auxpass': 0, 'acomp': 1, 'ccomp': 1, 'xcomp': 1, 'pcomp': 1,
+     'obj': 2, 'dobj': 2, 'pobj': 2, 'iobj': 2, 'dative': 2, 'oprd': 2, 'expl': 2, 'nsubj': 3,
+     'nsubjpass': 3, 'csubj': 3, 'csubjpass': 3, 'agent': 3, 'cc': 4, 'conj': 5, 'preconj': 5,
+     'punct': 6, 'det': 7, 'attr': 8, 'prep': 9, 'poss': 10, 'acl': 11, 'amod': 11,
+     'appos': 11, 'compound': 11, 'nmod': 11, 'nn': 11, 'nummod': 11, 'nounmod': 11,
+     'relcl': 11, 'case': 11, 'advcl': 12, 'advmod': 12, 'neg': 12, 'obl': 12, 'npmod': 12,
+     'npadvmod': 12, 'prt': 12
+}
+
+
+if __name__ == "__main__":
+    aux = ['aux', 'cop', 'auxpass']
+    comp = ['acomp', 'ccomp', 'xcomp', 'pcomp']
+    obj = ['obj', 'dobj', 'pobj', 'iobj', 'dative', 'oprd', 'expl']
+    subj = ['nsubj', 'nsubjpass', 'csubj', 'csubjpass', 'agent']
+    cc = ['cc']
+    conj = ['conj', 'preconj']
+    punct = ['punct']
+    det = ['det']
+    attr = ['attr']
+    prep = ['prep']
+    poss = ['poss']
+    noun_mods = ['acl', 'amod', 'appos', 'compound', 'nmod', 'nn', 'nummod', 'nounmod', 'relcl', 'case']
+    verb_mods = ['advcl', 'advmod', 'neg', 'obl', 'npmod', 'npadvmod', 'prt']
+    
+    deps = {}
+    count = 0
+    for l in [aux, comp, obj, subj, cc, conj, punct, det, attr, prep, poss, noun_mods, verb_mods]:
+        for d in l:
+            deps[d] = count
+        count += 1
+    print(deps)

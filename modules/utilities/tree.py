@@ -1,5 +1,6 @@
 class EmbeddingNode():
     def __init__(self, we, node):
+        # ADD SENTENCE HERE SO WE HAVE IT
         self.text = node.text.lower()
         self.dep = node.dep_
         self.pos = node.pos_
