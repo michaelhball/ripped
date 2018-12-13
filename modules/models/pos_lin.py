@@ -4,9 +4,11 @@ import torch.nn.functional as F
 
 from torch.autograd import Variable
 
+from modules.utilities import universal_tags
 
-class POSEncoder1LSTM(nn.Module):
-    def __init__(self, embedding_dim, batch_size, pos_tags, evaluate=False):
+
+class POSLin(nn.Module):
+    def __init__(self, embedding_dim, evaluate=False):
         """
         Sentence embedding model using pos tags.
         Args:
@@ -16,10 +18,9 @@ class POSEncoder1LSTM(nn.Module):
         """
         super().__init__()
         self.embedding_dim = embedding_dim
-        self.pos_tags = pos_tags
+        self.pos_tags = universal_tags
         self.num_params = max(list(self.pos_tags.values())) + 1
         self.params = nn.ModuleList([nn.Linear(self.embedding_dim, self.embedding_dim) for _ in range(self.num_params)])
-        self.lstm = nn.LSTM(self.embedding_dim, self.embedding_dim, 1)
         self.evaluate = evaluate
 
     def forward(self, input):
@@ -28,11 +29,13 @@ class POSEncoder1LSTM(nn.Module):
             for (pos, emb) in input:
                 x = Variable(torch.tensor([emb], dtype=torch.float), requires_grad=True)
                 D = self.params[self.pos_tags[pos]]
-                z = D(x)
+                z = F.relu(D(x))
                 word_reps.append(z)
 
             z = torch.stack(word_reps)
-            outputs, hidden_states = self.lstm(z)
-            output, _ = torch.max(outputs, 0)
+            output, _ = torch.max(z, 0)
+
+            if self.evaluate:
+                return output.detach().numpy(), [wr.detach().numpy() for wr in word_reps]
 
             return output
