@@ -17,6 +17,8 @@ class BasicClassifier(nn.Module):
     def forward(self, x):
         for l in self.layers:
             l_x = l(x)
-            x = F.relu(l_x)
+            x = F.relu(l_x) # EXPERIMENT
+        
+        # DO I NEED TO PUT A SOFTMAX HERE??
         
         return l_x
