@@ -10,12 +10,14 @@ import torch.nn.functional as Fs
 
 from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.model_selection import ParameterGrid
+from torchtext import data, vocab
 from tqdm import tqdm
 
-from modules.data_iterators import EasyIterator, SentEvalDataIterator
-from modules.data_readers import SentEvalDataReader
+from modules.data_iterators import *
+from modules.data_readers import IntentClassificationDataReader, SentEvalDataReader
 from modules.models import create_encoder
-from modules.model_wrappers import BaselineWrapper, DownstreamWrapper, ProbingWrapper, STSWrapper
+from modules.model_wrappers import BaselineWrapper, DownstreamWrapper, IntentWrapper, MTLWrapper, ProbingWrapper, STSWrapper
 from modules.utilities import *
 
 
@@ -27,6 +29,7 @@ parser.add_argument('--encoder_model', type=str, default='pos_tree', help='pos_l
 parser.add_argument('--num_epochs', type=int, default=10, help='number of epochs to train for')
 parser.add_argument('--model_name', type=str, default='999', help='name of model to train')
 parser.add_argument('--task', type=str, default='train', help='task out of train/test/evaluate')
+parser.add_argument('--subtask', type=str, default='none', help='sub-task within whichever specified task')
 parser.add_argument('--baseline_type', type=str, default='pool', help='type of baseline model')
 parser.add_argument('--lr', type=float, default=6e-4, help='learning rate for whichever model is being trained')
 parser.add_argument('--wd', type=float, default=0, help='L2 regularization for training')
@@ -235,32 +238,296 @@ def create_pos_tree_visualisations(save_file, sentence, sentence_tree, encoder):
     create_plot(f"{save_file}_overall.png", f"\"{str(sent)}\"", tokens, percentages)
 
 
+def cosine(u, v):
+    return np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
+
+
+
+def ic_grid_search(train_ds, val_ds, test_ds, param_grid, encoder_type, layers, TEXT, LABEL):
+    results = {}
+    for i, params in enumerate(ParameterGrid(param_grid)):
+        bs = params['bs']
+        drops = [params['drop1'], params['drop2']]
+        loss_func = nn.CrossEntropyLoss()
+        lr = params['lr']
+        mean, std = repeat_trainer(loss_func, train_ds, val_ds, test_ds, TEXT, LABEL, bs, layers, drops, lr, k=5)
+        print("-------------------------------------------------------------------------------------------------------------------------------------------")
+        print(params, mean, std)
+        print("-------------------------------------------------------------------------------------------------------------------------------------------")
+        results[i] = {'mean': mean, 'std': std, 'params': params}
+    print(results)
+
+
+def repeat_trainer(loss_func, train_ds, val_ds, test_ds, text, label, bs, layers, drops, lr, frac=1, k=10):
+    print(frac, int(len(train_ds.examples)*frac))
+    for i in range(k):
+        new_train_ds = train_ds
+        name = args.model_name + f'_{i}'
+        if frac != 1:
+            examples = train_ds.examples
+            np.random.shuffle(examples)
+            new_train_ds = data.Dataset(examples[:int(len(examples)*frac)], {'x': text, 'y': label})
+        train_di, val_di, test_di = get_intent_classification_data_iterators(new_train_ds, val_ds, test_ds, (bs,bs,bs))
+        wrapper = IntentWrapper(name, f'{args.saved_models}/intent_class', 300, text.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
+        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=lr, betas=(0.7, 0.999), weight_decay=args.wd, amsgrad=False)
+        train_losses, test_losses = wrapper.train(loss_func, opt_func, verbose=False)
+    
+    accuracies = []
+    for i in range(k):
+        name = args.model_name + f'_{i}'
+        train_di, val_di, test_di = get_intent_classification_data_iterators(train_ds, val_ds, test_ds, (bs,bs,bs))
+        wrapper = IntentWrapper(name, f'{args.saved_models}/intent_class', 300, text.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
+        accuracies.append(wrapper.test_accuracy(load=True))
+    
+    return np.mean(accuracies), np.std(accuracies)
+
+
 if __name__ == "__main__":
     embedding_dim = int(args.word_embedding.split('_')[1])
     layers = [2*embedding_dim, 250, 1]
     drops = [0, 0]
 
-    sick_train_data = './data/sick/train_data'
-    sick_test_data = './data/sick/test_data'
-    train_data_raw = pickle.load(Path('./data/sick/train.pkl').open('rb'))
-    test_data_raw = pickle.load(Path('./data/sick/test.pkl').open('rb'))
+    sick_train_data = './data/sts/sick/train_data'
+    sick_test_data = './data/sts/sick/test_data'
+    train_data_raw = pickle.load(Path('./data/sts/sick/train.pkl').open('rb'))
+    test_data_raw = pickle.load(Path('./data/sts/sick/test.pkl').open('rb'))
     di_suffix = {"pos_lin": "og", "pos_tree": "trees", "dep_tree": "trees"}
-    train_di = EasyIterator(f'{sick_train_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl')
-    test_di = EasyIterator(f'{sick_test_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl', randomise=False)
+    # train_di = EasyIterator(f'{sick_train_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl')
+    # test_di = EasyIterator(f'{sick_test_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl', randomise=False)
 
-    if args.task == "train":
+    if args.task == "train_sts":
         predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, train_di, test_di, args.encoder_model, layers=layers, drops=drops)
         loss_func = nn.MSELoss()
         opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr, weight_decay=args.wd, amsgrad=False)
         train_losses, test_losses = predictor.train(loss_func, opt_func, args.num_epochs)
         # plot_train_test_loss(train_losses, test_losses, save_file=f'./data/sick/loss_plots/{args.model_name}.png')
 
+    elif args.task == "intent":
+        import csv
+        data = []
+        nlp = spacy.load('en')
+        with open('./data/chat_ic_dataset.csv', 'r', encoding='mac_roman') as f:
+            csv_reader = csv.reader(f, delimiter=',')
+            for r in csv_reader:
+                r = list(filter(None, r))
+                data.append([[t.text.lower() for t in nlp(r[0])], r[1].split('.')[1]])
+        
+        print(data[:10])
+        # need to convert labels to indexes
+        # break this data in train, val, and test (balancing classes)
+        # convert to tokenised_pkl format so it will work with my data readers etc.
+        # i.e. simple json with x and y on every row.
+
+    elif args.task == "snipsnlu":
+
+        # accuracies = [0.951,0.941,0.865,0.81,0.606,0.245]
+        # stds = [0.002,0.015,0.02,0.036,0.168,0.195]
+        # fracs = [1,0.1,0.01,0.005,0.002,0.001]
+        # cis = [0.001146009,0.008595071,0.011460094,0.02062817,0.096264792,0.111735919]
+        # plt.plot(fracs, accuracies, color='black')
+        # plt.xlabel('fraction of training data'); plt.ylabel('accuracy')
+        # plt.xscale('log')
+        # plt.title('Accuracy using different fractions of training data')
+        # plt.errorbar(fracs,accuracies,yerr=cis, ecolor='black',elinewidth=0.5,capsize=1)
+        # plt.show()
+        # assert(False)
+
+
+        intents = ['add_to_playlist', 'book_restaurant', 'get_weather', 'play_music', 'rate_book', 'search_creative_work', 'search_screening_event']
+        C = len(intents)
+
+        # variables
+        TEXT = data.Field(sequential=True)
+        LABEL = data.LabelField(dtype=torch.int, use_vocab=False)
+        BS = 128
+        FRAC = 0.002
+        layers = [300, 100, C]
+        drops = [0, 0]
+
+        # get datasets & create vocab
+        train_ds, val_ds, test_ds = IntentClassificationDataReader('./data/snipsnlu', 'tknsd.pkl', TEXT, LABEL).read()
+        glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
+        TEXT.build_vocab(train_ds, vectors=glove_embeddings) # 10196
+
+        if args.subtask == "grid_search":
+            param_grid = {'lr': [1e-3, 6e-4, 3e-3, 6e-3], 'drop1': [0, 0.1], 'drop2': [0, 0.1], 'bs': [128, 64]}
+            ic_grid_search(train_ds, val_ds, test_ds, param_grid, args.encoder_model, layers, TEXT, LABEL)
+        
+        elif args.subtask == "repeat_train":
+            loss_func = nn.CrossEntropyLoss()
+            print(repeat_trainer(loss_func, train_ds, val_ds, test_ds, TEXT, LABEL, BS, layers, drops, args.lr, FRAC, k=10))
+
+        else:
+            train_di, val_di, test_di = get_intent_classification_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
+            wrapper = IntentWrapper(args.model_name, f'{args.saved_models}/intent_class', 300, TEXT.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
+            loss_func = nn.CrossEntropyLoss()
+            opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=args.lr, betas=(0.7, 0.999), weight_decay=args.wd, amsgrad=False)
+            train_losses, test_losses = wrapper.train(loss_func, opt_func)
+            # print(wrapper.repeat_trainer(loss_func, torch.optim.Adam, args.lr, (0.7,0.999), args.wd, k=20))
+
+
+
+    elif args.task == "train_sts_benchmark":
+        # import pandas as pd
+        # df = pd.read_csv('./data/stsbenchmark/sts-train.csv', index_col=None, sep='\t', header=None, names=['to_delete', 'to_delete', 'to_delete', 'id', 'similarity', 's1', 's2'])
+        # df = df.drop(columns=['to_delete', 'to_delete.1', 'to_delete.2', 'id'])
+        # df.drop_duplicates()
+        # df.reset_index(drop=True)
+        # df = df[pd.notnull(df['s2'])]
+
+        # import csv
+        # test_data = []
+        # with open('./data/stsbenchmark/sts-test.csv', 'r') as f:
+        #     csv_reader = csv.reader(f)
+        #     for r in csv_reader:
+        #         row = list(filter(None, r))
+        #         if len(row) == 1:
+        #             test_data.append(row[0].split('\t'))
+        #         else:
+        #             test_data.append(''.join(row).split('\t'))
+        # test_data = [r[4:7] for r in test_data]
+
+        # sentences = []
+        # for row in df.iterrows():
+        #     sentences += [row[1]['s1'], row[1]['s2']]
+        # for row in test_data:
+        #     sentences += [row[1], row[2]]
+        # pickle.dump(sentences, Path('./data/stsbenchmark/sentences.pkl').open('wb'))
+
+        # import nltk
+        # from pretrained_models.infersent.models import InferSent
+        # params_model = {'bsize': 64, 'word_emb_dim': 300, 'enc_lstm_dim': 2048,
+        #                 'pool_type': 'max', 'dpout_model': 0.0, 'version': 1}
+        # model = InferSent(params_model)
+        # model.load_state_dict(torch.load('infersent1.pkl'))
+        # model.set_w2v_path('./data/glove.840B.300d.txt')
+        # model.build_vocab(sentences, tokenize=True)
+        # embeddings = model.encode(sentences, bsize=128, tokenize=False, verbose=True)
+        # pickle.dump(embeddings, Path('./data/stsbenchmark/embeddings.pkl').open('wb'))
+
+        # sentences = pickle.load(Path('./data/stsbenchmark/sentences.pkl').open('rb'))
+        # embeddings = pickle.load(Path('./data/stsbenchmark/embeddings.pkl').open('rb'))
+        # s_enc_map = {}
+        # for i, s in enumerate(sentences):
+        #     if s not in s_enc_map:
+        #         s_enc_map[s] = embeddings[i]
+        # pickle.dump(s_enc_map, Path('./data/stsbenchmark/encoding_map.pkl').open('wb'))
+        
+        # enc = pickle.load(Path('./data/stsbenchmark/encoding_map.pkl').open('rb'))
+        # train_data = []
+        # for x in df.iterrows():
+        #     train_data.append([enc[x[1]['s1']], enc[x[1]['s2']], [float(x[1]['similarity'])]])
+        # pickle.dump(np.array(train_data), Path('./data/stsbenchmark/train_infersent.pkl').open('wb'))
+        # test_data = np.array([[enc[x[1]], enc[x[2]], [float(x[0])]] for x in test_data])
+        # pickle.dump(test_data, Path('./data/stsbenchmark/test_infersent.pkl').open('wb'))
+
+        # train_data_1 = pickle.load(Path('./data/stsbenchmark/train_infersent.pkl').open('rb'))
+        # train_data_2 = pickle.load(Path('./data/sick/train_infersent_2.pkl').open('rb'))
+        # train_data = np.concatenate([train_data_1, train_data_2])
+        # pickle.dump(train_data, Path('./data/sts_train_all.pkl').open('wb'))
+        # test_data_1 = pickle.load(Path('./data/stsbenchmark/test_infersent.pkl').open('rb'))
+        # test_data_2 = pickle.load(Path('./data/sick/test_infersent_2.pkl').open('rb'))
+        # test_data = np.concatenate([test_data_1, test_data_2])
+        # pickle.dump(test_data, Path('./data/sts_test_all.pkl').open('wb'))
+
+        # train_di = STSDataIterator('./data/stsbenchmark/train_infersent.pkl', batch_size=50, randomise=True)
+        # test_di = STSDataIterator('./data/stsbenchmark/test_infersent.pkl', randomise=False)
+        # train_di = STSDataIterator('./data/sts_train_all.pkl', batch_size=50, randomise=True)
+        # test_di = STSDataIterator('./data/sts_test_all.pkl', randomise=False)
+        train_di = STSDataIterator('./data/sick/train_infersent_2.pkl', batch_size=50, randomise=True)
+        test_di = STSDataIterator('./data/sick/test_infersent_2.pkl', randomise=False)
+        layers, drops = [2*4096, 1024, 1], [0.3, 0]
+        predictor = STSWrapper(args.model_name, args.saved_models, train_di, test_di, "pretrained", layers=layers, drops=drops)
+        loss_func = nn.MSELoss()
+        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr, weight_decay=args.wd, amsgrad=False)
+        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=0.01, weight_decay=args.wd, amsgrad=False)
+        opt_func = torch.optim.SGD(predictor.model.parameters(), lr=0.01)
+        train_losses, test_losses = predictor.train(loss_func, opt_func, args.num_epochs)
+
+
+
+
+    elif args.task == "train_sts_sick":
+
+        # sentences = []
+        # for s1,s2,_ in train_data_raw:
+        #     sentences.append(s1)
+        #     sentences.append(s2)
+        # for s1,s2,_ in test_data_raw:
+        #     sentences.append(s1)
+        #     sentences.append(s2)
+        # pickle.dump(sentences, Path('sentences.pkl').open('wb'))
+
+        # import nltk
+        # from pretrained_models.infersent.models import InferSent
+        # params_model = {'bsize': 64, 'word_emb_dim': 300, 'enc_lstm_dim': 2048,
+        #                 'pool_type': 'max', 'dpout_model': 0.0, 'version': 1}
+        # model = InferSent(params_model)
+        # model.load_state_dict(torch.load('infersent1.pkl'))
+        # model.set_w2v_path('./data/glove.840B.300d.txt')
+        # model.build_vocab(sentences, tokenize=True)
+        # embeddings = model.encode(sentences, bsize=128, tokenize=False, verbose=True)
+        
+        # pickle.dump(sentences, Path('9k_sentences.pkl').open('wb'))
+        # pickle.dump(embeddings, Path('embeddings.pkl').open('wb'))
+        
+
+        # sentences = pickle.load(Path('sentences.pkl').open('rb'))
+        # embeddings = pickle.load(Path('embeddings.pkl').open('rb'))
+        # s_enc_map = {}
+        # for i, s in enumerate(sentences):
+        #     if s not in s_enc_map:
+        #         s_enc_map[s] = embeddings[i]
+        # pickle.dump(s_enc_map, Path('encoding_map.pkl').open('wb'))
+        
+        # encoding_map = pickle.load(Path('encoding_map.pkl').open('rb'))
+
+
+        train_di = STSDataIterator('./data/sts/sick/train_infersent_2.pkl', batch_size=64, randomise=True)
+        test_di = STSDataIterator('./data/sts/sick/test_infersent_2.pkl', randomise=False)
+        layers, drops = [2*4096, 512, 1], [0, 0, 0]
+        wrapper = STSWrapper(args.model_name, args.saved_models, train_di, test_di, "pretrained", predictor_model="nn", layers=layers, drops=drops)
+        loss_func = nn.MSELoss()
+        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=args.lr, weight_decay=args.wd, amsgrad=False)
+        train_losses, test_losses = wrapper.train(loss_func, opt_func, args.num_epochs)
+
+
+    elif args.task == "elmo":
+        
+        sentences = ['hey my name is Nick and I have a penis']
+        
+        # from mosestokenizer import MosesTokenizer, MosesDetokenizer
+        # tokeniser = MosesTokenizer()
+        # tknzd = tokeniser(sentences[0])
+        # tokeniser.close()
+        # print(tknzd)
+        
+        import spacy
+        nlp = spacy.load('en')
+        tknzd = [[t.text for t in nlp(s)] for s in sentences]
+
+        from allennlp.commands.elmo import ElmoEmbedder
+        from allennlp.modules.elmo import Elmo, batch_to_ids
+        options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
+        weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+        
+        # elmo = ElmoEmbedder(options_file, weight_file)
+        # embeddings = elmo.embed_sentence(tknzd[0])
+        # print(embeddings.shape)
+
+        elmo = Elmo(options_file, weight_file, 1, dropout=0)
+        character_ids = batch_to_ids(tknzd)
+        embeddings = elmo(character_ids)
+        print(embeddings['elmo_representations'][0].shape)
+        # assuming I do one sentence at a time, this gives [seq_len, 1024] and then I can pool over these?
+
+
     elif args.task == "train_baseline":
         loss_func = nn.MSELoss()
         train_data = f'{sick_train_data}_{args.word_embedding}_baseline.pkl'
         test_data = f'{sick_test_data}_{args.word_embedding}_baseline.pkl'
         predictor = BaselineWrapper(args.model_name, args.saved_models, train_data, test_data, layers, drops, args.baseline_type, embedding_dim=embedding_dim)
-        opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr)
+        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr)
         predictor.train(loss_func, opt_func, args.num_epochs)
         predictor.save()
         p, s, i = predictor.test_correlation()
@@ -308,8 +575,8 @@ if __name__ == "__main__":
 
     elif args.task.startswith("probe"):
         probing_task = args.task.split("_", 1)[1]
-        train_data = f'./data/senteval_probing/{probing_task}_train_og.pkl'
-        test_data = f'./data/senteval_probing/{probing_task}_test_og.pkl'
+        train_data = f'./data/senteval_probing/{probing_task}_train_tree.pkl'
+        test_data = f'./data/senteval_probing/{probing_task}_test_tree.pkl'
         loss_func = nn.CrossEntropyLoss()
         layers = [embedding_dim, 200, 6]
         drops = [0, 0]
