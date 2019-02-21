@@ -4,19 +4,15 @@ import pickle
 from pathlib import Path
 from random import shuffle
 
-from modules.utilities import randomise, tokenise_and_embed
+from modules.utilities import randomise, T
 
 
-# THIS CAN BE CLEANED UP A BIT TO TAKE IN A DATA_READER... IT'S JUST THE EASY_ITERATOR THAT ONLY TAKES IN A FILE
-# , AND THIS ONE TAKES IN THE FILE CONTAINING LIST OF EMBEDDING_NODE PAIRS.
-class STSDataIterator(): # this has to be created for each dataset e.g. one each for train, dev, test
-    def __init__(self, data_path, batch_size, we_source, randomise=True):
-        self.randomise = randomise
+class STSDataIterator():
+    def __init__(self, data_file, batch_size=1, randomise=True):
+        self.data_file = data_file
         self.batch_size = batch_size
-        self.we_source = we_source
-        self.data_path = data_path
-        self.data = pickle.load(Path(data_path).open('rb'))
-        self.num_examples = len(self.data)
+        self.randomise = randomise
+        self.fetch_data()
         self.reset()
     
     def __len__(self):
@@ -25,27 +21,34 @@ class STSDataIterator(): # this has to be created for each dataset e.g. one each
     def __iter__(self):
         self.reset()
         while self.i < self.n - 1:
-            batch = self.get_batch(self.i)
+            batch = (self.batched_s1s[self.i], self.batched_s2s[self.i], self.batched_scores[self.i])
             self.i += 1
             yield batch
-    
-    def save_data(self, save_file):
-        pickle.dump(self.data, Path(save_file).open('wb'))
 
-    def batchify(self, data):
+    def fetch_data(self):
+        self.data = pickle.load(Path(self.data_file).open('rb'))
+        self.num_examples = len(self.data)
+        self.s1s = np.array([list(x) for x in self.data.T[0]])
+        self.s2s = np.array([list(x) for x in self.data.T[1]])
+        self.scores = np.array([list(x) for x in self.data.T[2]])
+
+    def batchify(self):
+        self.batched_s1s, self.batched_s2s, self.batched_scores = self.s1s, self.s2s, self.scores
         if self.randomise:
-            data = shuffle(data)
+            np.random.seed(42)
+            perm = np.random.permutation(len(self.data))
+            self.batched_s1s = self.s1s[perm]
+            self.batched_s2s = self.s2s[perm]
+            self.batched_scores = self.scores[perm]
         nb = self.num_examples // self.batch_size
-        data = np.array(data[:nb*self.batch_size]) # [num_examples,3]
-        data = data.reshape(-1, self.batch_size, data.shape[1]) # [num_batches, bs, 3]
-
-        return data
-
-    def get_batch(self, i):
-        return self.batched_data[i]
+        self.batched_s1s = self.batched_s1s[:nb*self.batch_size]
+        self.batched_s2s = self.batched_s2s[:nb*self.batch_size]
+        self.batched_scores = self.batched_scores[:nb*self.batch_size]
+        self.batched_s1s = T(self.batched_s1s.reshape(-1, self.batch_size, self.batched_s1s.shape[1]))
+        self.batched_s2s = T(self.batched_s2s.reshape(-1, self.batch_size, self.batched_s2s.shape[1]))
+        self.batched_scores = T(self.batched_scores.reshape(-1, self.batch_size, self.batched_scores.shape[1]))
     
     def reset(self):
-        self.data = tokenise_and_embed(self.we_source, self.data)
-        self.batched_data = self.batchify(self.data)
-        self.n = len(self.batched_data)
-        self.i, self.iter = 0, 0
+        self.i = 0
+        self.batchify()
+        self.n = len(self.batched_s1s)

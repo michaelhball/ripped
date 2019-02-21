@@ -4,15 +4,11 @@ import torch.nn.functional as F
 
 class CosineSimSTSPredictor(nn.Module):
     """
-    A class to predict similarity based purely on the distance
+    A class to predict similarity based purely on the cosine sim
     """
-    def __init__(self, encoder):
+    def __init__(self, encoder, layers=None, drops=None):
         super().__init__()
         self.encoder = encoder
     
-    def forward(self, input1, input2):
-        x_1 = self.encoder(input1) # 1xd
-        x_2 = self.encoder(input2) # 1xd
-        cosine_sim = F.cosine_similarity(x_1, x_2)
-
-        return cosine_sim
+    def forward(self, x1, x2):
+        return F.cosine_similarity(self.encoder(x1), self.encoder(x2))

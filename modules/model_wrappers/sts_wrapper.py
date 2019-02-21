@@ -5,7 +5,7 @@ import torch
 from scipy.stats.stats import pearsonr, spearmanr
 from tqdm import tqdm
 
-from modules.models import create_sts_predictor
+from modules.models import create_sts_predictor, create_sts_predictor_w_pretrained_encoder
 from modules.utilities import V
 
 from .base_wrapper import BaseWrapper
@@ -15,12 +15,13 @@ class STSWrapper(BaseWrapper):
     """
     A class for training an STS predictor.
     """
-    def __init__(self, name, saved_models, embedding_dim, train_di, test_di, encoder_model, layers=None, drops=None):
+    def __init__(self, name, saved_models, train_di, test_di, encoder_model, predictor_model="nn", embedding_dim=None, layers=None, drops=None):
         self.name = name
         self.saved_models = saved_models
         self.embedding_dim = embedding_dim
         self.train_di, self.test_di = train_di, test_di
         self.encoder_model = encoder_model
+        self.predictor_model = predictor_model
         self.layers = layers
         self.drops = drops
         self.create_model()
@@ -46,7 +47,10 @@ class STSWrapper(BaseWrapper):
         self.model.encoder.load_state_dict(torch.load(path))
     
     def create_model(self):
-        self.model = create_sts_predictor(self.embedding_dim, self.encoder_model, self.layers, self.drops)
+        if self.encoder_model == "pretrained":
+            self.model = create_sts_predictor_w_pretrained_encoder(self.layers, self.drops, predictor_type=self.predictor_model)
+        else:
+            self.model = create_sts_predictor(self.embedding_dim, self.encoder_model, self.layers, self.drops)
 
     def test_correlation(self, load=False):
         if load:
@@ -55,12 +59,12 @@ class STSWrapper(BaseWrapper):
         self.model.eval()
         self.model.training = False
         preds, scores, info = [], [], []
-        for i, example in enumerate(iter(self.test_di)):
-            s1, s2, score = example
-            pred = self.model(s1, s2)
-            preds.append(pred.item())
-            scores.append((score-1)/4)
-            info.append((i, (score-1)/4, pred.item()))
+        for i, (s1, s2, score) in enumerate(iter(self.test_di)):
+            pred = self.model(s1, s2).item()
+            score = score.item()
+            preds.append(pred)
+            scores.append(score)
+            info.append((i, score, pred))
         
         pearson = pearsonr(preds, scores)
         spearman = spearmanr(preds, scores)
@@ -72,10 +76,9 @@ class STSWrapper(BaseWrapper):
         self.model.eval()
         self.model.training = False
         total_loss = 0.0
-        for i, example in enumerate(iter(self.test_di)):
-            s1, s2, score = example
-            pred = self.model(s1, s2)
-            total_loss += loss_func(pred[0], V((score)-1)/4)
+        for i, (s1s, s2s, scores) in enumerate(iter(self.test_di)):
+            pred = self.model(s1s, s2s)
+            total_loss += loss_func(pred, scores)
         
         return total_loss / self.test_di.num_examples
 
@@ -87,17 +90,22 @@ class STSWrapper(BaseWrapper):
             self.model.train()
             self.model.training = True
             total_loss = 0.0
-            for i, example in tqdm(enumerate(iter(self.train_di)), total=len(self.train_di)):
+
+            for i, (s1s, s2s, scores) in tqdm(enumerate(iter(self.train_di)), total=len(self.train_di)):
                 self.model.zero_grad()
-                s1, s2, score = example
-                pred = self.model(s1, s2)
-                loss = loss_func(pred[0], V((score)-1)/4)
+                pred = self.model(s1s, s2s) # bs x 1
+                loss = loss_func(pred, scores)
                 total_loss += loss.item()
                 loss.backward()
                 opt_func.step()
             
-            avg_train_loss = total_loss / self.train_di.num_examples
+            avg_train_loss = total_loss / self.train_di.n
             avg_test_loss = self.avg_test_loss(loss_func)
+
+            # if test_losses and (test_losses[-1] - avg_test_loss) < 0.005:
+            #     for pg in opt_func.param_groups:
+            #         pg['lr'] /= 10
+
             train_losses.append(avg_train_loss)
             test_losses.append(avg_test_loss)
 
