@@ -51,6 +51,8 @@ class IntentWrapper(BaseWrapper):
             args = [self.embedding_dim, self.embedding_dim, 1]
         elif self.encoder_model == "we_pool":
             args = [self.embedding_dim]
+        else:
+            print('there are no classes set up for this encoder type yet')
         self.model = create_intent_classifier(self.encoder_model, self.vocab, self.layers, self.drops, *args)
 
     def avg_val_loss(self, loss_func):
@@ -120,7 +122,8 @@ class IntentWrapper(BaseWrapper):
         return np.mean(accuracies), np.std(accuracies)
 
     def train(self, loss_func, opt_func, num_epochs=1000, verbose=True):
-        print("-------------------------  Training Intent Classifier -------------------------")
+        if verbose:
+            print("-------------------------  Training Intent Classifier -------------------------")
         start_time = time.time()
         train_losses, val_losses = [], []
         early_stopping = EarlyStopping(patience=4, verbose=False) # EXPERIMENT
@@ -153,9 +156,10 @@ class IntentWrapper(BaseWrapper):
             if verbose:
                 print(f"epoch {e+1}, avg train loss: {avg_train_loss}, avg val loss: {avg_val_loss}, test accuracy: {self.test_accuracy()}")
         
-        print(f'accuracy: {self.test_accuracy()}')
+        # print(f'accuracy: {self.test_accuracy()}')
 
-        elapsed_time = time.time() - start_time
-        print("Training intent classifier completed in {0}".format(time.strftime("%H:%M:%S", time.gmtime(elapsed_time))))
+        if verbose:
+            elapsed_time = time.time() - start_time
+            print("Training intent classifier completed in {0}".format(time.strftime("%H:%M:%S", time.gmtime(elapsed_time))))
 
         return train_losses, val_losses
