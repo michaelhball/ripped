@@ -1,9 +1,11 @@
 import argparse
 import gensim.downloader as api
+import math
 import matplotlib.pyplot as plt
 import numpy as np
 import pickle
 import spacy
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as Fs
@@ -33,6 +35,7 @@ parser.add_argument('--subtask', type=str, default='none', help='sub-task within
 parser.add_argument('--baseline_type', type=str, default='pool', help='type of baseline model')
 parser.add_argument('--lr', type=float, default=6e-4, help='learning rate for whichever model is being trained')
 parser.add_argument('--wd', type=float, default=0, help='L2 regularization for training')
+parser.add_argument('--frac', type=float, default=1, help='fraction of training data to use')
 args = parser.parse_args()
 
 
@@ -242,25 +245,65 @@ def cosine(u, v):
     return np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
 
 
-
-def ic_grid_search(train_ds, val_ds, test_ds, param_grid, encoder_type, layers, TEXT, LABEL):
-    results = {}
+def grid_search(saved_models, train_ds, val_ds, test_ds, param_grid, encoder_type, layers, TEXT, LABEL, k=10, verbose=True):
+    """
+    Perform grid search over given parameter options.
+    Args:
+        saved_models (str): directory to save temporary models
+        train_ds (Dataset): torchtext dataset with training data
+        val_ds (Dataset): torchtext dataset with validation data
+        test_ds (Dataset): torchtext dataset with testing data
+        param_grid (dict): param values: {str: list(values)}
+        encoder_type (str): encoder type to use
+        layers (list(int)): list of feedforward layers for classifier
+        TEXT (Field): torchtext field representing x values
+        LABEL (LabelField): torchtext labelfield representing y values
+        k (int): number of training runs to perform for each trial
+    Returns:
+        List of trials sorted by mean accuracy (each trial performs k training runs)
+    """
+    results = []
     for i, params in enumerate(ParameterGrid(param_grid)):
+        lr = params['lr']
         bs = params['bs']
         drops = [params['drop1'], params['drop2']]
         loss_func = nn.CrossEntropyLoss()
-        lr = params['lr']
-        mean, std = repeat_trainer(loss_func, train_ds, val_ds, test_ds, TEXT, LABEL, bs, layers, drops, lr, k=5)
+        mean, std = repeat_trainer(saved_models, loss_func, train_ds, val_ds, test_ds, TEXT, LABEL, bs, layers, drops, lr, k=k, verbose=verbose)
         print("-------------------------------------------------------------------------------------------------------------------------------------------")
-        print(params, mean, std)
+        print(i, params, mean, std)
         print("-------------------------------------------------------------------------------------------------------------------------------------------")
-        results[i] = {'mean': mean, 'std': std, 'params': params}
-    print(results)
+        results.append({'mean': mean, 'std': std, 'params': params})
+
+    return(sorted(results, key=lambda x: x['mean']))
 
 
-def repeat_trainer(loss_func, train_ds, val_ds, test_ds, text, label, bs, layers, drops, lr, frac=1, k=10):
-    print(frac, int(len(train_ds.examples)*frac))
+def repeat_trainer(saved_models, loss_func, train_ds, val_ds, test_ds, text, label, bs, layers, drops, lr, frac=1, k=10, verbose=True):
+    """
+    Function to perform multiple training runs (for model validation).
+    Args:
+        saved_models (str): directory to save temporary models
+        loss_func (): pytorch loss function for training
+        train_ds (Dataset): torchtext dataset with training data
+        val_ds (Dataset): torchtext dataset with validation data
+        test_ds (Dataset): torchtext dataset with testing data
+        text (Field): torchtext field representing x values
+        label (LabelField): torchtext labelfield representing y values
+        bs (int): batch_size
+        layers (list(int)): list of feedforward layers for classifier
+        drops (list(float)): list of dropouts to apply to layers
+        lr (float): learning rate for training
+        frac (float): fraction of training data to use
+        k (int): number of training runs to perform
+        verbose (bool): for printing
+    Returns:
+        mean and standard deviation of training run accuracy
+    """
+    if verbose:
+        print(f"-------------------------  Performing {k} Training Runs -------------------------")
+        start_time = time.time()
+    
     for i in range(k):
+        # TO DO: Ideally i want to shuffle the training data each iteration here, before taking a fraction or creating iterators
         new_train_ds = train_ds
         name = args.model_name + f'_{i}'
         if frac != 1:
@@ -268,15 +311,19 @@ def repeat_trainer(loss_func, train_ds, val_ds, test_ds, text, label, bs, layers
             np.random.shuffle(examples)
             new_train_ds = data.Dataset(examples[:int(len(examples)*frac)], {'x': text, 'y': label})
         train_di, val_di, test_di = get_intent_classification_data_iterators(new_train_ds, val_ds, test_ds, (bs,bs,bs))
-        wrapper = IntentWrapper(name, f'{args.saved_models}/intent_class', 300, text.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
-        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=lr, betas=(0.7, 0.999), weight_decay=args.wd, amsgrad=False)
+        wrapper = IntentWrapper(name, saved_models, 300, text.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
+        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=lr, betas=(0.7, 0.999), weight_decay=args.wd)
         train_losses, test_losses = wrapper.train(loss_func, opt_func, verbose=False)
+
+    if verbose:
+        elapsed_time = time.time() - start_time
+        print(f"{k} training runs completed in {0}".format(time.strftime("%H:%M:%S", time.gmtime(elapsed_time))))
     
     accuracies = []
     for i in range(k):
         name = args.model_name + f'_{i}'
         train_di, val_di, test_di = get_intent_classification_data_iterators(train_ds, val_ds, test_ds, (bs,bs,bs))
-        wrapper = IntentWrapper(name, f'{args.saved_models}/intent_class', 300, text.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
+        wrapper = IntentWrapper(name, saved_models, 300, text.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
         accuracies.append(wrapper.test_accuracy(load=True))
     
     return np.mean(accuracies), np.std(accuracies)
@@ -302,24 +349,38 @@ if __name__ == "__main__":
         train_losses, test_losses = predictor.train(loss_func, opt_func, args.num_epochs)
         # plot_train_test_loss(train_losses, test_losses, save_file=f'./data/sick/loss_plots/{args.model_name}.png')
 
-    elif args.task == "intent":
-        import csv
-        data = []
-        nlp = spacy.load('en')
-        with open('./data/chat_ic_dataset.csv', 'r', encoding='mac_roman') as f:
-            csv_reader = csv.reader(f, delimiter=',')
-            for r in csv_reader:
-                r = list(filter(None, r))
-                data.append([[t.text.lower() for t in nlp(r[0])], r[1].split('.')[1]])
+
+    elif args.task == "chat_ic":
+        intents = pickle.load(Path('./data/chat_ic/intents.pkl').open('rb'))
+        C = len(intents)
+        TEXT = data.Field(sequential=True)
+        LABEL = data.LabelField(dtype=torch.int, use_vocab=False)
+        BS = 128
+        FRAC = 1
+        layers = [300, 100, C]
+        drops = [0, 0]
+
+        train_ds, val_ds, test_ds = IntentClassificationDataReader('./data/chat_ic/', '_tknsd.pkl', TEXT, LABEL).read()
+        glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
+        TEXT.build_vocab(train_ds, vectors=glove_embeddings) # 461
+
+        if args.subtask == "grid_search":
+            param_grid = {'lr': [3e-3, 6e-3, 1e-2], 'drop1': [0, 0.1, 0.2], 'drop2': [0, 0.1, 0.2], 'bs': [128]}
+            results = grid_search(f'{args.saved_models}/chat_ic', train_ds, val_ds, test_ds, param_grid, args.encoder_model, layers, TEXT, LABEL, k=5, verbose=False)
+            print(results)
+        elif args.subtask == "repeat_train":
+            loss_func = nn.CrossEntropyLoss()
+            mean, std = repeat_trainer(f'{args.saved_models}/{args.task}', loss_func, train_ds, val_ds, test_ds, TEXT, LABEL, BS, layers, drops, args.lr, verbose=True)
+            print(mean, std)
+        elif args.subtask == "train":
+            train_di, val_di, test_di = get_intent_classification_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
+            loss_func = nn.CrossEntropyLoss()
+            wrapper = IntentWrapper(args.model_name, f'{args.saved_models}/chat_ic', 300, TEXT.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
+            opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=args.lr, betas=(0.7,0.999), weight_decay=args.wd)
+            train_losses, val_losses = wrapper.train(loss_func, opt_func)
         
-        print(data[:10])
-        # need to convert labels to indexes
-        # break this data in train, val, and test (balancing classes)
-        # convert to tokenised_pkl format so it will work with my data readers etc.
-        # i.e. simple json with x and y on every row.
 
     elif args.task == "snipsnlu":
-
         # accuracies = [0.951,0.941,0.865,0.81,0.606,0.245]
         # stds = [0.002,0.015,0.02,0.036,0.168,0.195]
         # fracs = [1,0.1,0.01,0.005,0.002,0.001]
@@ -331,7 +392,6 @@ if __name__ == "__main__":
         # plt.errorbar(fracs,accuracies,yerr=cis, ecolor='black',elinewidth=0.5,capsize=1)
         # plt.show()
         # assert(False)
-
 
         intents = ['add_to_playlist', 'book_restaurant', 'get_weather', 'play_music', 'rate_book', 'search_creative_work', 'search_screening_event']
         C = len(intents)
@@ -345,7 +405,7 @@ if __name__ == "__main__":
         drops = [0, 0]
 
         # get datasets & create vocab
-        train_ds, val_ds, test_ds = IntentClassificationDataReader('./data/snipsnlu', 'tknsd.pkl', TEXT, LABEL).read()
+        train_ds, val_ds, test_ds = IntentClassificationDataReader('./data/snipsnlu/', '_tknsd.pkl', TEXT, LABEL).read()
         glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
         TEXT.build_vocab(train_ds, vectors=glove_embeddings) # 10196
 
