@@ -7,10 +7,10 @@ from torchtext.data.example import Example
 
 
 class IntentClassificationDataReader():
-    def __init__(self, file_dir, file_suffix, text, label):
-        self.train_file = f'{file_dir}/train_{file_suffix}'
-        self.val_file = f'{file_dir}/val_{file_suffix}'
-        self.test_file = f'{file_dir}/test_{file_suffix}'
+    def __init__(self, file_prefix, file_suffix, text, label):
+        self.train_file = f'{file_prefix}train{file_suffix}'
+        self.val_file = f'{file_prefix}val{file_suffix}'
+        self.test_file = f'{file_prefix}test{file_suffix}'
         self.full_data = {"train": {}, "val": {}, "test": {}}
         self.fields1 = {'x': ('x', text), 'y': ('y', label)}
         self.fields2 = {'x': text, 'y': label}
