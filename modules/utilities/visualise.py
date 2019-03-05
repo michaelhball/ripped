@@ -1,11 +1,9 @@
 import matplotlib.pyplot as plt
 
-from matplotlib.ticker import MaxNLocator # not sure what this does
-
 from .math import confidence_interval
 
 
-__all__ = ['plot_against_supervised', 'plot_train_test_loss']
+__all__ = ['plot_against_supervised']
 
 
 def plot_against_supervised(ss_methods, data_source, classifier, get_results_func, to_plot='class_acc', display=True, save_file=None):
