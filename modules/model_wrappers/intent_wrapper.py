@@ -1,23 +1,27 @@
-import math
 import matplotlib.pyplot as plt
-import numpy as np
-import time
 import torch
 
 from sklearn.metrics import precision_recall_fscore_support
-from tqdm import tqdm
 
 from modules.models import create_intent_classifier
 from modules.utilities import EarlyStopping
+from modules.utilities.imports import *
 
 from .base_wrapper import BaseWrapper
 
 
+__all__ == ["IntentWrapper"]
+
+
 class IntentWrapper(BaseWrapper):
-    """
-    A class for training intent classification model.
-    """
     def __init__(self, name, saved_models, embedding_dim, vocab, encoder_model, train_di, val_di, test_di, encoder_args, layers, drops=None):
+        """
+        A class for training intent classification model.
+        Args:
+            name (str): 
+        Returns:
+
+        """
         self.name = name
         self.saved_models = saved_models
         self.embedding_dim = embedding_dim

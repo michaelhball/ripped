@@ -9,11 +9,14 @@ from modules.utilities import EarlyStopping
 from .base_wrapper import BaseWrapper
 
 
+__all__ == ["STSWrapper"]
+
+
 class STSWrapper(BaseWrapper):
-    """
-    A class for training an STS predictor.
-    """
     def __init__(self, name, saved_models, embedding_dim, vocab, encoder_model, predictor_model, train_di, val_di, test_di, layers, drops, *args):
+        """
+        A class for training a Semantic-Textual Similarity predictor.
+        """
         self.name = name
         self.saved_models = saved_models
         self.embedding_dim = embedding_dim
