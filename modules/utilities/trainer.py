@@ -1,5 +1,5 @@
 """
-Utility functions for different training functionality.
+Utility functions for managing training processes.
 """
 import numpy as np
 import time
@@ -7,8 +7,10 @@ import torch
 
 from sklearn.model_selection import ParameterGrid
 from torchtext import data, vocab
-from torchtext.data.example import Example
 from tqdm import tqdm
+
+
+__all__ = ['grid_search', 'repeat_trainer']
 
 
 def grid_search(get_iter_func, wrapper_class, saved_models, datasets, param_grid, encoder_type, encoder_args, layers, text_field, label_field, frac=1, k=10, verbose=True):
@@ -75,7 +77,7 @@ def repeat_trainer(model_name, encoder_model, get_iter_func, wrapper_class, save
         new_train_ds = data.Dataset(examples[:int(len(examples)*frac)], {'x': text_field, 'y': label_field})
         train_di, val_di, test_di = get_iter_func(new_train_ds, val_ds, test_ds, (bs,bs,bs))
         wrapper = wrapper_class(name, saved_models, 300, text_field.vocab, encoder_model, train_di, val_di, test_di, encoder_args, layers=layers, drops=drops)
-        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=lr, betas=(0.7, 0.999), weight_decay=0) # hardcoded
+        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=lr, betas=(0.7, 0.999), weight_decay=0)
         train_losses, test_losses = wrapper.train(loss_func, opt_func, verbose=False)
 
     if verbose:
@@ -91,6 +93,6 @@ def repeat_trainer(model_name, encoder_model, get_iter_func, wrapper_class, save
         p, r, f, s = wrapper.test_precision_recall_f1(load=True)
         precisions.append(np.mean(p))
         recalls.append(np.mean(r))
-        f1s.append(np.mean(f)) 
+        f1s.append(np.mean(f))
     
     return np.mean(accuracies), np.std(accuracies), np.mean(precisions), np.mean(recalls), np.mean(f1s)
