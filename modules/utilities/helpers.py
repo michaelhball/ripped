@@ -1,7 +1,9 @@
 import numpy as np
-import torch
 
-from torch.autograd import Variable
+from .imports_torch import *
+
+
+__all__ = ['randomise', 'V', 'T']
 
 
 def randomise(arr):
