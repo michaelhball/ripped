@@ -126,7 +126,7 @@ class IntentWrapper(BaseWrapper):
             print("-------------------------  Training Intent Classifier -------------------------")
         start_time = time.time()
         train_losses, val_losses = [], []
-        early_stopping = EarlyStopping(patience=4, verbose=False) # EXPERIMENT
+        early_stopping = EarlyStopping(patience=4, verbose=False)
 
         for e in range(num_epochs):
             self.model.train(); self.model.training = True
