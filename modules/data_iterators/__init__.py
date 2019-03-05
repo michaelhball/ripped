@@ -1,5 +1,3 @@
-import torch
-
 from torchtext import data
 
 
@@ -12,8 +10,7 @@ def get_ic_data_iterator(ds, batch_size):
         batch_size=batch_size,
         sort_key=lambda eg: len(eg.x),
         repeat=False,
-        shuffle=True,
-        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        shuffle=True
     )
 
 
@@ -23,8 +20,7 @@ def get_ic_data_iterators(train_ds, val_ds, test_ds, batch_sizes):
         batch_sizes=batch_sizes,
         sort_key=lambda eg: len(eg.x),
         repeat=False,
-        shuffle=True,
-        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        shuffle=True
     )
     
     return train_di, val_di, test_di
@@ -37,8 +33,7 @@ def get_sts_data_iterators(train_ds, val_ds, test_ds, batch_sizes):
         sort_key=lambda eg: (len(eg.x1), len(eg.x2)),
         repeat=False,
         batch_size_fn=sts_batch_size_fn,
-        shuffle=True,
-        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        shuffle=True
     )
 
     return train_di, val_di, test_di

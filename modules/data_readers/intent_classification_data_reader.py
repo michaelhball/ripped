@@ -1,9 +1,10 @@
-import pickle
-import torch
-
-from pathlib import Path
 from torchtext import data
 from torchtext.data.example import Example
+
+from modules.utilities.imports import *
+
+
+__all__ == ["IntentClassificationDataReader"]
 
 
 class IntentClassificationDataReader():

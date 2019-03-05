@@ -1,11 +1,5 @@
-import numpy as np
-import pickle
-import torch
-import torch.nn as nn
-
 from flair.data import Sentence
 from flair.embeddings import BertEmbeddings, ELMoEmbeddings, FlairEmbeddings, StackedEmbeddings
-from pathlib import Path
 from torchtext import data
 from torchtext.data.example import Example
 
@@ -13,6 +7,9 @@ from modules.data_iterators import get_ic_data_iterators
 from modules.models import create_encoder
 from modules.model_wrappers import IntentWrapper
 from modules.utilities import repeat_trainer
+
+from modules.utilities.imports import *
+from modules.utilities.imports_torch import *
 
 from .knn import knn_classify
 
