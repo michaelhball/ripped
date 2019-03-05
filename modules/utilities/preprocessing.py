@@ -49,6 +49,10 @@ def tokenise(data):
     return tokenised
 
 
+def tokenise_sent(nlp, s):
+        return [t.text.lower() for t in nlp(str(s))]
+
+
 def create_vocab(sentences):
     freq = Counter(p for o in sentences for p in o)
     vocab = [o for o, c in freq.items() if c > 1] # could use >2?

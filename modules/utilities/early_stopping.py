@@ -4,6 +4,7 @@ Taken from https://github.com/Bjarten/early-stopping-pytorch
 import numpy as np
 import torch
 
+
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
     def __init__(self, patience=7, verbose=False):
@@ -21,13 +22,14 @@ class EarlyStopping:
         self.early_stop = False
         self.val_loss_min = np.Inf
 
-    def __call__(self, val_loss, model, model_save_dir, model_name):
-
+    def __call__(self, val_loss, wrapper):
         score = -val_loss
-
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint(val_loss, model, model_save_dir, model_name)
+            if self.verbose:
+                print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  storing state_dict...')
+            wrapper.save_with_suffix()
+            self.val_loss_min = val_loss
         elif score < self.best_score:
             self.counter += 1
             if self.verbose:
@@ -36,12 +38,8 @@ class EarlyStopping:
                 self.early_stop = True
         else:
             self.best_score = score
-            self.save_checkpoint(val_loss, model, model_save_dir, model_name)
+            if self.verbose:
+                print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  storing state_dict...')
+            wrapper.save_with_suffix()
             self.counter = 0
-
-    def save_checkpoint(self, val_loss, model, model_save_dir, model_name):
-        '''Saves model when validation loss decrease.'''
-        if self.verbose:
-            print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), f'{model_save_dir}/{model_name}_best_checkpoint.pt')
-        self.val_loss_min = val_loss
+            self.val_loss_min = val_loss
