@@ -360,49 +360,6 @@ if __name__ == "__main__":
         opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=args.wd)
         train_losses, val_losses = wrapper.train(loss_func, opt_func)
 
-    # elif args.task == "snipsnlu":
-    #     # accuracies = [0.951,0.941,0.865,0.81,0.606,0.245]
-    #     # fracs = [1,0.1,0.01,0.005,0.002,0.001]
-    #     # cis = [0.001146009,0.008595071,0.011460094,0.02062817,0.096264792,0.111735919]
-    #     # # plt.plot(fracs, accuracies, color='black')
-    #     # plt.xlabel('fraction of training data'); plt.ylabel('accuracy')
-    #     # plt.xscale('log')
-    #     # plt.yticks([0.1*i for i in range(11)])
-    #     # plt.title('Accuracy using different fractions of training data')
-    #     # plt.errorbar(fracs,accuracies,yerr=cis,fmt='r-',ecolor='black',elinewidth=0.5,capsize=1)
-    #     # plt.show()
-    #     # assert(False)
-
-    #     intents = ['add_to_playlist', 'book_restaurant', 'get_weather', 'play_music', 'rate_book', 'search_creative_work', 'search_screening_event']
-    #     C = len(intents)
-    #     TEXT = data.Field(sequential=True)
-    #     LABEL = data.LabelField(dtype=torch.int, use_vocab=False)
-    #     BS = 64 if args.encoder_model == "we_pool" else 128
-    #     FRAC = args.frac
-    #     layers = [300, 100, C]
-    #     drops = [0, 0]
-
-    #     # get datasets & create vocab
-    #     train_ds, val_ds, test_ds = IntentClassificationDataReader('./data/snipsnlu/', '_tknsd.pkl', TEXT, LABEL).read()
-    #     glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
-    #     TEXT.build_vocab(train_ds, vectors=glove_embeddings) # 10196
-
-    #     if args.subtask == "grid_search":
-    #         param_grid = {'lr': [1e-3, 6e-4, 3e-3, 6e-3], 'drop1': [0, 0.1], 'drop2': [0, 0.1], 'bs': [128, 64]}
-    #         ic_grid_search(train_ds, val_ds, test_ds, param_grid, args.encoder_model, layers, TEXT, LABEL)
-        
-    #     elif args.subtask == "repeat_train":
-    #         loss_func = nn.CrossEntropyLoss()
-    #         print(repeat_trainer(loss_func, train_ds, val_ds, test_ds, TEXT, LABEL, BS, layers, drops, args.lr, FRAC, k=10))
-
-    #     elif args.subtask == "train":
-    #         train_di, val_di, test_di = get_ic_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
-    #         wrapper = IntentWrapper(args.model_name, f'{args.saved_models}/intent_class', 300, TEXT.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
-    #         loss_func = nn.CrossEntropyLoss()
-    #         opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=args.lr, betas=(0.7, 0.999), weight_decay=args.wd, amsgrad=False)
-    #         train_losses, test_losses = wrapper.train(loss_func, opt_func)
-    #         # print(wrapper.repeat_trainer(loss_func, torch.optim.Adam, args.lr, (0.7,0.999), args.wd, k=20))
-
 
     elif args.task == "train_sts_benchmark":
         # import pandas as pd
@@ -612,34 +569,3 @@ if __name__ == "__main__":
     #     wrapper.train(loss_func, opt_func, 10)
     #     wrapper.save()
     #     print(wrapper.test_accuracy())
-
-    elif args.task == "data":
-        we = load_glove('./data/glove.840B.300d.txt')
-        nlp = spacy.load('en')
-        dr = SentEvalDataReader('./data/senteval_probing/subj_number.txt')
-        di = SentEvalDataIterator(dr, 'glove-wiki-gigaword-50', type_="tr", randomise=False)
-        from random import shuffle
-        train_data = di.all_data['tr']
-        test_data = di.all_data['te']
-        shuffle(train_data)
-        shuffle(test_data)
-        train_data_tree = []
-        train_data_og = []
-        for x in tqdm(train_data[:20000], total=20000):
-            label = 0 if x[0] == "NNS" else 1
-            sent_tree = tokenise_sent_tree(we, nlp, x[1].replace("\"", ""))
-            sent_og = tokenise_sent_og(we, nlp, x[1].replace("\"", ""))
-            train_data_tree.append((label, sent_tree))
-            train_data_og.append((label, sent_og))
-        pickle.dump(train_data_tree, Path('./data/senteval_probing/subj_number_train_tree.pkl').open('wb'))
-        pickle.dump(train_data_og, Path('./data/senteval_probing/subj_number_train_og.pkl').open('wb'))
-        test_data_tree = []
-        test_data_og = []
-        for x in tqdm(test_data[:5000], total=5000):
-            label = 0 if x[0] == "NNS" else 1
-            sent_tree = tokenise_sent_tree(we, nlp, x[1].replace("\"", ""))
-            sent_og = tokenise_sent_og(we, nlp, x[1].replace("\"", ""))
-            test_data_tree.append((label, sent_tree))
-            test_data_og.append((label, sent_og))
-        pickle.dump(test_data_tree, Path('./data/senteval_probing/subj_number_test_tree.pkl').open('wb'))
-        pickle.dump(test_data_og, Path('./data/senteval_probing/subj_number_test_og.pkl').open('wb'))
