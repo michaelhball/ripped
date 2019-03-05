@@ -1,1 +1,1 @@
-from .knn import knn_classify
+from .knn import *

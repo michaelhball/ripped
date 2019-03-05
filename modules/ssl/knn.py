@@ -3,6 +3,9 @@ import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 
 
+__all__ = ['knn_classify']
+
+
 def knn_classify(n, xs_l, ys_l, xs_u, ys_u=None, weights='uniform', distance_metric='euclidean'):
     """
     Fits a KNN model to labeled data and output labels for unlabeled data.
