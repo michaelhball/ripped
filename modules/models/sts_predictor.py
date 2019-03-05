@@ -16,11 +16,11 @@ class STSPredictor(nn.Module):
     
     def forward(self, x1, x2):
         x1, x2 = self.encoder(x1), self.encoder(x2) # bs x d
-        diff = (x1-x2).abs() # bs x d --------- maybe try this without the absolute here? could be something interesting to try
+        diff = (x1-x2).abs() # bs x d
         mult = x1 * x2 # bs x d
         x = torch.cat((diff, mult), 1) # bs x (2xd)
         for l in self.layers:
             l_x = l(x)
-            x = F.sigmoid(l_x) # consider changing this to softmax/sigmoid etc here
+            x = F.relu(l_x)
 
         return l_x
