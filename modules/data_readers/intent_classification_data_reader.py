@@ -28,11 +28,6 @@ class IntentClassificationDataReader():
         self.test_ds = self.read_one(self.test_file, "test")
         
         return self.train_ds, self.val_ds, self.test_ds
-    
-    # def dump_examples(self, dump_folder):
-    #     json.dump(self.train_data, Path(dump_folder+'train_egs.pkl').open('wb'))
-    #     json.dump(self.val_data, Path(dump_folder+'val_egs.pkl').open('wb'))
-    #     json.dump(self.test_data, Path(dump_folder+'test_egs.pkl').open('wb'))
 
 
 if __name__ == "__main__":
