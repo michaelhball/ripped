@@ -1,41 +1,30 @@
 import argparse
-import csv
-import numpy as np
-import pandas as pd
-import pickle
-import spacy
-import torch
-import torch.nn as nn
 
-from pathlib import Path
 from torchtext import data, vocab
 from torchtext.data.example import Example
-from tqdm import tqdm
 
 from modules.data_iterators import *
-from modules.data_readers import IntentClassificationDataReader, STSDataReader
+from modules.data_readers import *
 from modules.models import *
-from modules.model_wrappers import IntentWrapper, ProbingWrapper, STSWrapper
-from modules.ssl import repeat_augment_and_train
+from modules.model_wrappers import *
+from modules.ssl import *
 from modules.utilities import *
+
+from modules.utilities.imports import *
+from modules.utilities.imports_torch import *
 
 from results import all_results
 
 
 parser = argparse.ArgumentParser(description='PyTorch Dependency-Parse Encoding Model')
-parser.add_argument('--word_embedding_source', type=str, default='glove-wiki-gigaword-50', help='word embedding source to use')
-parser.add_argument('--word_embedding', type=str, default='glove_50', help='name of default word embeddings to use')
-parser.add_argument('--saved_models', type=str, default='./models', help='directory to save/load models')
-parser.add_argument('--encoder_model', type=str, default='pos_tree', help='pos_lin/pos_tree/dep_tree')
-parser.add_argument('--predictor_model', type=str, default='mlp', help='mlp / cosine_sim')
-parser.add_argument('--num_epochs', type=int, default=10, help='number of epochs to train for')
-parser.add_argument('--model_name', type=str, default='999', help='name of model to train')
 parser.add_argument('--task', type=str, default='train', help='task out of train/test/evaluate')
 parser.add_argument('--subtask', type=str, default='none', help='sub-task within whichever specified task')
-parser.add_argument('--baseline_type', type=str, default='pool', help='type of baseline model')
-parser.add_argument('--lr', type=float, default=6e-4, help='learning rate for whichever model is being trained')
-parser.add_argument('--wd', type=float, default=0, help='L2 regularization for training')
+parser.add_argument('--saved_models', type=str, default='./models', help='directory to save/load models')
+parser.add_argument('--model_name', type=str, default='999', help='name of model to train')
+parser.add_argument('--encoder_model', type=str, default='pos_tree', help='encoder model for primary task')
 parser.add_argument('--frac', type=float, default=1, help='fraction of training data to use')
+parser.add_argument('--predictor_model', type=str, default='mlp', help='mlp / cosine_sim')
+
 args = parser.parse_args()
 
 
@@ -73,7 +62,7 @@ def get_results(algorithm, data_source, classifier, encoder=None, similarity_mea
 
 if __name__ == "__main__":
 
-    # embedding_dim = int(args.word_embedding.split('_')[1])
+    # embedding_dim = 300
     # layers = [2*embedding_dim, 250, 1]
     # drops = [0, 0]
     # sick_train_data = './data/sts/sick/train_data'
@@ -115,9 +104,10 @@ if __name__ == "__main__":
         # run augmentation trials
         aug_algo = 'knn' # 'knn'|'label_propagation'|None
         dir_to_save = f'{args.saved_models}/ic/{data_source}'
+
         class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds = [],[],[],[]
         p_means, p_stds, r_means, r_stds, f1_means, f1_stds = [],[],[],[],[],[]
-        for FRAC in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05):s
+        for FRAC in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05):
             class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, p_mean, p_std, r_mean, r_std, f1_mean, f1_std = repeat_augment_and_train(dir_to_save, data_source, aug_algo, args.encoder_model, (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, classifier_params, k=5)
             class_acc_means.append(class_acc_mean); class_acc_stds.append(class_acc_std)
             aug_acc_means.append(aug_acc_mean); aug_acc_stds.append(aug_acc_std)
@@ -237,7 +227,7 @@ if __name__ == "__main__":
         BS = 64 if args.encoder_model.startswith("pool") else 128
         EMB_DIM, HID_DIM = 300, 100
         FRAC = args.frac
-        LR = args.lr
+        LR = 6e-4
         layers, drops = [EMB_DIM, HID_DIM, C], [0, 0]
 
         train_ds, val_ds, test_ds = IntentClassificationDataReader(f'./data/ic/{data_source}/', '_tknsd.pkl', TEXT, LABEL).read()
@@ -268,7 +258,7 @@ if __name__ == "__main__":
             train_di, val_di, test_di = get_ic_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
             loss_func = nn.CrossEntropyLoss()
             wrapper = IntentWrapper(args.model_name, f'{args.saved_models}/{task}/{data_source}',EMB_DIM,TEXT.vocab,args.encoder_model,train_di,val_di,test_di,encoder_args,layers=layers,drops=drops)
-            opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=args.wd)
+            opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=0)
             train_losses, val_losses = wrapper.train(loss_func, opt_func)
 
 
@@ -277,7 +267,7 @@ if __name__ == "__main__":
         TEXT = data.Field(sequential=True)
         LABEL = data.LabelField(dtype=torch.float, use_vocab=False)
         BS = 64
-        LR = args.lr
+        LR = 6e-4
         EMB_DIM = 300
         HID_DIM = 300
         layers = [2*EMB_DIM, HID_DIM, C]
@@ -306,7 +296,7 @@ if __name__ == "__main__":
             train_di, val_di, test_di = get_sts_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
             loss_func = nn.MSELoss()
             wrapper = STSWrapper(args.model_name,saved_models_path,EMB_DIM,TEXT.vocab,args.encoder_model,args.predictor_model,train_di,val_di,test_di,layers,drops,*encoder_args)
-            opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=args.wd)
+            opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=0)
             train_losses, val_losses, correlations = wrapper.train(loss_func, opt_func)
         elif args.subtask == "test":
             train_di, val_di, test_di = get_sts_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
@@ -323,7 +313,7 @@ if __name__ == "__main__":
         LABEL = data.LabelField(dtype=torch.int, use_vocab=False)
         BS = 128
         FRAC = args.frac
-        LR = args.lr
+        LR = 6e-4
         layers = [300, 100, C]
         drops = [0, 0]
 
@@ -357,7 +347,7 @@ if __name__ == "__main__":
         assert(False)
         loss_func = nn.CrossEntropyLoss()
         wrapper = IntentWrapper(args.model_name, f'{args.saved_models}/chat_ic', 300, model, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
-        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=args.wd)
+        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=0)
         train_losses, val_losses = wrapper.train(loss_func, opt_func)
 
 
@@ -433,10 +423,10 @@ if __name__ == "__main__":
         layers, drops = [2*4096, 1024, 1], [0.3, 0]
         predictor = STSWrapper(args.model_name, args.saved_models, train_di, test_di, "pretrained", layers=layers, drops=drops)
         loss_func = nn.MSELoss()
-        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr, weight_decay=args.wd, amsgrad=False)
-        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=0.01, weight_decay=args.wd, amsgrad=False)
+        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr, weight_decay=0, amsgrad=False)
+        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=0.01, weight_decay=0, amsgrad=False)
         opt_func = torch.optim.SGD(predictor.model.parameters(), lr=0.01)
-        train_losses, test_losses = predictor.train(loss_func, opt_func, args.num_epochs)
+        train_losses, test_losses = predictor.train(loss_func, opt_func, 50)
 
 
 
@@ -482,8 +472,8 @@ if __name__ == "__main__":
         layers, drops = [2*4096, 512, 1], [0, 0, 0]
         wrapper = STSWrapper(args.model_name, args.saved_models, train_di, test_di, "pretrained", predictor_model="nn", layers=layers, drops=drops)
         loss_func = nn.MSELoss()
-        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=args.lr, weight_decay=args.wd, amsgrad=False)
-        train_losses, test_losses = wrapper.train(loss_func, opt_func, args.num_epochs)
+        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=6e-4, weight_decay=0, amsgrad=False)
+        train_losses, test_losses = wrapper.train(loss_func, opt_func, 50)
 
 
     elif args.task == "elmo":
@@ -545,13 +535,13 @@ if __name__ == "__main__":
 
     # elif args.task == "test_sst":
     #     train_data = f'./data/sst/train_data_{args.word_embedding}_og.pkl'
-    #     test_data = f'./data/sst/test_data_{args.word_embedding}_og.pkl'
+    #     test_data = f'./data/sst/test_data_{args.word_embedding}_og.pkl's
     #     loss_func = nn.CrossEntropyLoss()
     #     layers = [embedding_dim, 500, 5]
     #     drops = [0, 0]
     #     encoder = create_encoder(embedding_dim, args.encoder_model)
     #     classifier = DownstreamWrapper(args.model_name, args.saved_models, "sst_classification", train_data, test_data, encoder, layers, drops)
-    #     opt_func = torch.optim.Adagrad(classifier.model.parameters(), lr=args.lr, weight_decay=args.wd)
+    #     opt_func = torch.optim.Adagrad(classifier.model.parameters(), lr=args.lr, weight_decay=0)
     #     classifier.train(loss_func, opt_func, 15)
     #     classifier.save()
     #     print(classifier.test_accuracy())
@@ -565,7 +555,7 @@ if __name__ == "__main__":
     #     drops = [0, 0]
     #     encoder = create_encoder(embedding_dim, args.encoder_model)
     #     wrapper = ProbingWrapper(args.model_name, args.saved_models, probing_task, train_data, test_data, encoder, layers, drops)
-    #     opt_func = torch.optim.SGD(wrapper.model.parameters(), lr=args.lr, weight_decay=args.wd)
+    #     opt_func = torch.optim.SGD(wrapper.model.parameters(), lr=args.lr, weight_decay=0)
     #     wrapper.train(loss_func, opt_func, 10)
     #     wrapper.save()
     #     print(wrapper.test_accuracy())
