@@ -6,7 +6,7 @@ from pathlib import Path
 from random import shuffle
 from tqdm import tqdm
 
-from modules.models import create_classifier
+# from modules.models import create_classifier
 from modules.utilities import V
 
 from .base_wrapper import BaseWrapper
