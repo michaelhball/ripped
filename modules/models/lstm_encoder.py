@@ -1,8 +1,4 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-from torch.autograd import Variable
+from modules.utilities.imports_torch import *
 
 
 class LSTMEncoder(nn.Module):

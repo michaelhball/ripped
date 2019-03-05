@@ -1,7 +1,6 @@
-import torch.nn as nn
-import torch.nn.functional as F
+from modules.utilities.imports_torch import *
 
-from .linear_block import LinearBlock
+from .linear_block import LinearBlocks
 
 
 class BasicClassifier(nn.Module):
@@ -17,8 +16,6 @@ class BasicClassifier(nn.Module):
     def forward(self, x):
         for l in self.layers:
             l_x = l(x)
-            x = F.relu(l_x) # EXPERIMENT
-        
-        # DO I NEED TO PUT A SOFTMAX HERE??
+            x = F.relu(l_x)
         
         return l_x

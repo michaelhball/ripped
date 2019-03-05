@@ -1,6 +1,4 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from modules.utilities.imports_torch import *
 
 from .linear_block import LinearBlock
 
@@ -15,9 +13,9 @@ class STSPredictor(nn.Module):
         self.layers = nn.ModuleList([LinearBlock(layers[i], layers[i+1], drops[i]) for i in range(len(layers) - 1)])
     
     def forward(self, x1, x2):
-        x1, x2 = self.encoder(x1), self.encoder(x2) # bs x d
-        diff = (x1-x2).abs() # bs x d
-        mult = x1 * x2 # bs x d
+        x1, x2 = self.encoder(x1), self.encoder(x2)
+        diff = (x1-x2).abs()
+        mult = x1 * x2
         x = torch.cat((diff, mult), 1) # bs x (2xd)
         for l in self.layers:
             l_x = l(x)

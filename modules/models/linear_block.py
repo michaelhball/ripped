@@ -1,4 +1,4 @@
-import torch.nn as nn
+from modules.utilities.imports_torch import *
 
 
 class LinearBlock(nn.Module):
