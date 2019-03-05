@@ -1,10 +1,13 @@
 """
 Taken from https://github.com/Bjarten/early-stopping-pytorch 
 """
+__all__ = ['EarlyStopping']
+
+
 class EarlyStopping:
-    """Early stops the training if validation loss doesn't improve after a given patience."""
     def __init__(self, patience=7, verbose=False):
         """
+        Early stops the training if validation loss doesn't improve after a given patience.
         Args:
             patience (int): How long to wait after last time validation loss improved.
                             Default: 7
