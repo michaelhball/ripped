@@ -1,31 +1,22 @@
 import argparse
 import csv
-import gensim.downloader as api
-import json
-import math
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pickle
 import spacy
-import time
 import torch
 import torch.nn as nn
-import torch.nn.functional as Fs
 
-from flair.data import Sentence
-from flair.embeddings import BertEmbeddings, ELMoEmbeddings, FlairEmbeddings, StackedEmbeddings
 from pathlib import Path
-from sklearn.metrics.pairwise import cosine_similarity
 from torchtext import data, vocab
 from torchtext.data.example import Example
 from tqdm import tqdm
 
 from modules.data_iterators import *
-from modules.data_readers import IntentClassificationDataReader, SentEvalDataReader, STSDataReader
+from modules.data_readers import IntentClassificationDataReader, STSDataReader
 from modules.models import *
-from modules.model_wrappers import BaselineWrapper, DownstreamWrapper, IntentWrapper, MTLWrapper, ProbingWrapper, STSWrapper
-from modules.ssl import knn_classify
+from modules.model_wrappers import IntentWrapper, ProbingWrapper, STSWrapper
+from modules.ssl import repeat_augment_and_train
 from modules.utilities import *
 
 from results import all_results
@@ -46,135 +37,6 @@ parser.add_argument('--lr', type=float, default=6e-4, help='learning rate for wh
 parser.add_argument('--wd', type=float, default=0, help='L2 regularization for training')
 parser.add_argument('--frac', type=float, default=1, help='fraction of training data to use')
 args = parser.parse_args()
-
-
-def create_data_source_embeddings(train_ds, text_field, data_source, embedding_type):
-    if embedding_type == "glove":
-        encoder = create_encoder(text_field.vocab, 300, "pool_max", *['max'])
-        encoder.eval()
-        sents = [torch.tensor([[text_field.vocab.stoi[t] for t in eg.x]]) for eg in train_ds.examples]
-        embeddings = {}
-        for eg, idxed in zip(train_ds.examples, sents):
-            sent = ' '.join(eg.x)
-            emb = encoder(idxed.reshape(-1, 1)).detach().squeeze(0).numpy()
-            embeddings[sent] = embs
-    elif embedding_type == "bert":
-        encoder = BertEmbeddings()
-        sents = [Sentence(' '.join(eg.x)) for eg in train_ds.examples]
-        encoder.embed(sents)
-        b_embeddings = np.array([torch.max(torch.stack([t.embedding for t in S]), 0)[0].detach().numpy() for S in sents])
-        embeddings = {' '.join(eg.x): emb for eg, emb in zip(train_ds.examples, b_embeddings)}
-
-    pickle.dump(embeddings, Path('./data/ic/{data_source}/{embedding_type}_embeddings.pkl').open('wb'))
-
-
-def encode_data_with_pretrained(train_ds, text_field, embedding_type, examples_l, examples_u):
-    data_source_embeddings_path = f'./data/ic/{data_source}/{embedding_type}_embeddings.pkl'
-    embeddings_file = Path(data_source_embeddings_path)
-    
-    if not embeddings_file.is_file():
-        create_data_source_embeddings(train_ds, text_field, data_source, embedding_type)
-        embeddings_file = Path(data_source_embeddings_path)
-
-    embeddings = pickle.load(embeddings_file.open('rb'))
-    xs_l = np.array([embeddings[' '.join(eg.x)] for eg in examples_l])
-    xs_u = np.array([embeddings[' '.join(eg.x)] for eg in examples_u])
-
-    ys_l = np.array([eg.y for eg in examples_l])
-    ys_u = np.array([eg.y for eg in examples_u])
-    xs_u_unencoded = [eg.x for eg in examples_u]
-
-    return xs_l, ys_l, xs_u, ys_u, xs_u_unencoded
-
-
-def augment(aug_algo, encoder_model, labeled_examples, unlabeled_examples, train_ds, text_field, label_field, normalise_encodings=True):
-    if encoder_model.startswith('pretrained'):
-        embedding_type = encoder_model.split('_')[1]
-        res = encode_data_with_pretrained(train_ds, text_field, embedding_type, labeled_examples, unlabeled_examples)
-    elif encoder_model.startswith('sts'):
-        pass
-    xs_l, ys_l, xs_u, ys_u, xs_u_unencoded = res
-
-    if normalise_encodings:
-        xs_l = np.array([x / np.linalg.norm(x) for x in xs_l])
-        xs_u = np.array([x / np.linalg.norm(x) for x in xs_u])
-    
-    if aug_algo == "knn":
-        classifications, num_correct = knn_classify(5, xs_l, ys_l, xs_u, ys_u, weights='uniform', distance_metric='euclidean')
-    elif aug_algo == "lp":
-        pass
-    
-    # unlabeled = [[text_field.vocab.itos[idx] for idx in sent] for sent in xs_u_unencoded] -- only need to do this if we idxs not strings
-    new_labeled_data = [{'x': x, 'y': classifications[i]} for i,x in enumerate(xs_u_unencoded)]
-    example_fields = {'x': ('x', text_field), 'y': ('y', label_field)}
-    new_examples = [Example.fromdict(x, example_fields) for x in new_labeled_data]
-
-    return labeled_examples + new_examples, float(num_correct / len(classifications))
-
-
-def repeat_augment_and_train(dir_to_save, aug_algo, encoder_model, datasets, text_field, label_field, frac, classifier_params, k=5):
-    """
-    Runs k trials of augmentation & repeat-classification for a given fraction of labeled training data.
-    Args:
-        dir_to_save (str): directory to save models created/loaded during this process
-        aug_algo (str): which augmentation algorithm to use
-        encoder_model (str): encoder model to use for augmentation (w similarity measure between these encodings)
-        datasets (list(Dataset)): train/val/test torchtext datasets
-        text_field (Field): torchtext field for sentences
-        label_field (LabelField): torchtext LabelField for class labels
-        frac (float): Fraction of labeled training data to use
-        classifier_params (dict): params for intent classifier to use on augmented data.
-        k (int): Number of times to repeat augmentation-classifier training process
-    Returns:
-        8 statistical measures of the results of these trialss
-    """
-    train_ds, val_ds, test_ds = datasets
-    aug_accs = []
-    means, stds = [], []
-    ps, rs, fs = [], [], []
-    for i in range(k):
-        print(f"Augmentation run # {i+1}")
-        examples = train_ds.examples
-        np.random.shuffle(examples)
-        cutoff = int(frac*len(examples))
-        labeled_examples = examples[:cutoff]
-        unlabeled_examples = examples[cutoff:]
-
-        if aug_algo and frac < 1:
-            augmented_train_examples, aug_acc = augment(aug_algo, encoder_model, labeled_examples, unlabeled_examples, train_ds, text_field, label_field)
-            aug_accs.append(aug_acc)
-        else:
-            augmented_train_examples = labeled_examples
-            aug_accs.append(1)
-
-        new_train_ds = data.Dataset(augmented_train_examples, {'x': text_field, 'y': label_field})
-        new_datasets = (new_train_ds, val_ds, test_ds)
-        mean, std, avg_p, avg_r, avg_f = repeat_ic(dir_to_save, text_field, label_field, new_datasets, classifier_params)
-        means.append(mean); stds.append(std); ps.append(avg_p); rs.append(avg_r); fs.append(avg_f)
-
-    print(f"FRAC '{frac}' RESULTS BELOW:")
-    print(f'augmentation acc mean: {np.mean(aug_accs)}, augmentation acc std: {np.std(aug_accs)}')
-    print(f'precision mean: {np.mean(ps)}, recall mean: {np.mean(rs)}, f1 mean: {np.mean(fs)}')
-    print(f'class acc mean: {np.mean(means)}, class acc std: {np.std(means)}, mean of stds: {np.mean(stds)}')
-
-    class_acc_mean, class_acc_std = np.mean(means), np.std(means)
-    aug_acc_mean, aug_acc_std = np.mean(aug_accs), np.std(aug_accs)
-    p_mean, r_mean, f1_mean = np.mean(ps), np.mean(rs), np.mean(fs)
-    p_std, r_std, f1_std = np.std(ps), np.std(rs), np.std(fs)
-
-    return class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, p_mean, p_std, r_mean, r_std, f1_mean, f1_std
-
-
-def repeat_ic(dir_to_save, text_field, label_field, datasets, classifier_params, k=10):
-    """
-    Repeat intent classification training process
-    """
-    loss_func = nn.CrossEntropyLoss()
-    ps = classifier_params
-    mean, std, avg_p, avg_r, avg_f = repeat_trainer(ps['model_name'], ps['encoder_model'], get_ic_data_iterators, IntentWrapper, dir_to_save, 
-                                    loss_func, datasets, text_field, label_field, ps['bs'], ps['encoder_args'],
-                                    ps['layers'], ps['drops'], ps['lr'], frac=1, k=k, verbose=True)
-    return mean, std, avg_p, avg_r, avg_f
 
 
 def get_results(algorithm, data_source, classifier, encoder=None, similarity_measure=None):
@@ -210,33 +72,20 @@ def get_results(algorithm, data_source, classifier, encoder=None, similarity_mea
 
 
 if __name__ == "__main__":
-    # ss_methods = {
-    #     "knn-bert": {
-    #         "algorithm": "knn_all",
-    #         "encoder": "bert",
-    #         "similarity": "cosine",
-    #         "colour": "b-"
-    #     }
-    # }
-    # data_source = 'chat'
-    # classifier = "pool_max"
-    # to_plot = "class_acc"
-    # plot_against_supervised(ss_methods, data_source, classifier, get_results, to_plot=to_plot, display=True, save_file=None)
-    # assert(False)
 
-    embedding_dim = int(args.word_embedding.split('_')[1])
-    layers = [2*embedding_dim, 250, 1]
-    drops = [0, 0]
-    sick_train_data = './data/sts/sick/train_data'
-    sick_test_data = './data/sts/sick/test_data'
-    train_data_raw = pickle.load(Path('./data/sts/sick/train.pkl').open('rb'))
-    test_data_raw = pickle.load(Path('./data/sts/sick/test.pkl').open('rb'))
+    # embedding_dim = int(args.word_embedding.split('_')[1])
+    # layers = [2*embedding_dim, 250, 1]
+    # drops = [0, 0]
+    # sick_train_data = './data/sts/sick/train_data'
+    # sick_test_data = './data/sts/sick/test_data'
+    # train_data_raw = pickle.load(Path('./data/sts/sick/train.pkl').open('rb'))
+    # test_data_raw = pickle.load(Path('./data/sts/sick/test.pkl').open('rb'))s
     # di_suffix = {"pos_lin": "og", "pos_tree": "trees", "dep_tree": "trees"}
     # train_di = EasyIterator(f'{sick_train_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl')
     # test_di = EasyIterator(f'{sick_test_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl', randomise=False)
 
     if args.task.startswith("propagater"):
-        # params for everything
+        # params
         t = args.task.split("_")
         task = t[0]; data_source = t[1]
         intents = pickle.load(Path(f'./data/ic/{data_source}/intents.pkl').open('rb'))
@@ -251,9 +100,7 @@ if __name__ == "__main__":
         glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
         TEXT.build_vocab(train_ds, vectors=glove_embeddings)
 
-        # repeatedly augment dataset (using different labeled fraction) and repeatedly train classifier for each.
-        
-        # standard intent classifier for testing different learning methods.
+        # pool_max intent classifier for for each learning method.
         classifier_params = {
             'model_name': 'test',
             'encoder_model': 'pool_max',
@@ -270,22 +117,43 @@ if __name__ == "__main__":
         dir_to_save = f'{args.saved_models}/ic/{data_source}'
         class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds = [],[],[],[]
         p_means, p_stds, r_means, r_stds, f1_means, f1_stds = [],[],[],[],[],[]
-        for FRAC in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05):
-            class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, p_mean, p_std, r_mean, r_std, f1_mean, f1_std = repeat_augment_and_train(dir_to_save, aug_algo, args.encoder_model, (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, classifier_params, k=5)
+        for FRAC in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05):s
+            class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, p_mean, p_std, r_mean, r_std, f1_mean, f1_std = repeat_augment_and_train(dir_to_save, data_source, aug_algo, args.encoder_model, (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, classifier_params, k=5)
             class_acc_means.append(class_acc_mean); class_acc_stds.append(class_acc_std)
             aug_acc_means.append(aug_acc_mean); aug_acc_stds.append(aug_acc_std)
             p_means.append(p_mean); r_means.append(r_mean); f1_means.append(f1_mean)
             p_stds.append(p_std); r_stds.append(r_std); f1_stds.append(f1_std)
-        print(class_acc_means)
-        print(class_acc_stds)
-        print(aug_acc_means)
-        print(aug_acc_stds)
-        print(p_means)
-        print(p_stds)
-        print(r_means)
-        print(r_stds)
-        print(f1_means)
-        print(f1_stds)
+        
+        # print all results
+        for stat in (class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds, p_means, p_stds, r_means, r_stds, f1_means, f1_stds):
+            print(stat)
+
+
+    elif args.task == "plot_results":
+        ss_methods = {
+            "knn-BERT": {
+                "algorithm": "knn_all",
+                "encoder": "bert",
+                "similarity": "cosine",
+                "colour": "b-"
+            },
+            "knn-ELMo": {
+                "algorithm": "knn_all",
+                "encoder": "elmo",
+                "similarity": "cosine",
+                "colour": "g-"
+            },
+            "knn-GloVe": {
+                "algorithm": "knn_all",
+                "encoder": "glove",
+                "similarity": "cosine",
+                "colour": "o-"
+            }
+        }
+        data_source = 'chat'
+        classifier = "pool_max"
+        to_plot = "class_acc"
+        plot_against_supervised(ss_methods, data_source, classifier, get_results, to_plot=to_plot, display=True, save_file=None)
 
 
     elif args.task.startswith("propagate"):
@@ -403,6 +271,7 @@ if __name__ == "__main__":
             opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=args.wd)
             train_losses, val_losses = wrapper.train(loss_func, opt_func)
 
+
     elif args.task.startswith("sts"):
         C = 1
         TEXT = data.Field(sequential=True)
@@ -446,8 +315,8 @@ if __name__ == "__main__":
             print(f'pearson: {round(p[0],3)}, spearman: {round(s[0],3)}')
 
 
-    elif args.task =="infersent":
 
+    elif args.task == "infersent":
         intents = pickle.load(Path('./data/chat_ic/intents.pkl').open('rb'))
         C = len(intents)
         TEXT = data.Field(sequential=True, use_vocab=False) # REMEMBER TO CHANGE THIS BACK IF I NEED TO.
@@ -490,67 +359,6 @@ if __name__ == "__main__":
         wrapper = IntentWrapper(args.model_name, f'{args.saved_models}/chat_ic', 300, model, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
         opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=args.wd)
         train_losses, val_losses = wrapper.train(loss_func, opt_func)
-
-
-
-    # elif args.task == "chat_ic":
-    #     # fracs = [1,0.9,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1,0.05]
-    #     # we_accs = [0.848,0.828,0.822,0.81,0.795,0.786,0.764,0.722,0.712,0.619,0.436]
-    #     # we_cis = [0.005901542,0.009797332,0.007560146,0.010067337,0.01172594,0.011263074,
-    #     #         0.013423116,0.012767389,0.014310276,0.02005753,0.064415528]
-    #     # lstm_accs = [0.916,0.9,0.892,0.872,0.846,0.845,0.819,0.78,0.727,0.577,0.425]
-    #     # lstm_cis = [0.006171548,0.006827275,0.008177301,0.008215873,0.008177301,0.008755883,
-    #     #         0.009643043,0.016277457,0.019556092,0.017550339,0.029932006]
-    #     # we_f1s = [0.789,0.752,0.750,0.724,0.705,0.690,0.669,0.603,0.583,0.469,0.281]
-    #     # lstm_f1s = [0.867,0.856,0.852,0.831,0.755,0.730,0.725,0.625,0.549,0.364,0.239]
-    #     # # plt.plot(fracs, we_f1s, 'r-')
-    #     # # plt.plot(fracs, lstm_f1s, 'b-')
-    #     # plt.errorbar(fracs,we_accs,yerr=we_cis,fmt='r-',ecolor='black',elinewidth=0.5,capsize=1,label='we_pool')
-    #     # plt.errorbar(fracs,lstm_accs,yerr=lstm_cis,fmt='b-', ecolor='blue',elinewidth=0.5,capsize=1,label='lstm')
-    #     # plt.xticks([0.1*i for i in range(0,11)])
-    #     # plt.title('F1 scores w different fractions of training data')
-    #     # plt.xlabel('fraction of training data'); plt.ylabel('F1')
-    #     # plt.legend()
-    #     # plt.show()
-    #     # assert(False)
-
-    #     intents = pickle.load(Path('./data/chat_ic/intents.pkl').open('rb'))
-    #     C = len(intents)
-    #     TEXT = data.Field(sequential=True)
-    #     LABEL = data.LabelField(dtype=torch.int, use_vocab=False)
-    #     BS = 64 if args.encoder_model == "we_pool" else 128
-    #     FRAC = args.frac
-    #     LR = args.lr
-    #     layers = [300, 100, C]
-    #     drops = [0, 0] if args.encoder_model == "we_pool" else [0.1, 0.2]
-
-    #     train_ds, val_ds, test_ds = IntentClassificationDataReader('./data/chat_ic/', '_tknsd.pkl', TEXT, LABEL).read()
-    #     glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
-    #     TEXT.build_vocab(train_ds, vectors=glove_embeddings) # 461
-
-    #     if args.subtask == "grid_search":
-    #         param_grid = {'lr': [3e-3, 6e-3, 1e-2], 'drop1': [0, 0.1, 0.2], 'drop2': [0, 0.1, 0.2], 'bs': [128]}
-    #         results = grid_search(f'{args.saved_models}/chat_ic', train_ds, val_ds, test_ds,
-    #                 param_grid, args.encoder_model, layers, TEXT, LABEL, k=5, verbose=False)
-    #         print(results)
-    #     elif args.subtask == "repeat_train":
-    #         for frac in (0.9, 0.8):
-    #             train_ds, val_ds, test_ds = IntentClassificationDataReader('./data/chat_ic/', '_tknsd.pkl', TEXT, LABEL).read()
-    #             glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
-    #             TEXT.build_vocab(train_ds, vectors=glove_embeddings) # 461
-    #             FRAC = frac
-    #             loss_func = nn.CrossEntropyLoss()
-    #             mean, std = repeat_trainer(f'{args.saved_models}/{args.task}', loss_func, train_ds, val_ds, test_ds,
-    #                     TEXT, LABEL, BS, layers, drops, LR, FRAC, k=10, verbose=True)
-    #             print(mean, std)
-    #             print(f"frac^{frac}")
-    #     elif args.subtask == "train":
-    #         train_di, val_di, test_di = get_ic_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
-    #         loss_func = nn.CrossEntropyLoss()
-    #         wrapper = IntentWrapper(args.model_name, f'{args.saved_models}/chat_ic', 300, TEXT.vocab, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
-    #         opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=args.wd)
-    #         train_losses, val_losses = wrapper.train(loss_func, opt_func)
-
 
     # elif args.task == "snipsnlu":
     #     # accuracies = [0.951,0.941,0.865,0.81,0.606,0.245]
@@ -750,18 +558,6 @@ if __name__ == "__main__":
         print(embeddings['elmo_representations'][0].shape)
         # assuming I do one sentence at a time, this gives [seq_len, 1024] and then I can pool over these?
 
-
-    elif args.task == "train_baseline":
-        loss_func = nn.MSELoss()
-        train_data = f'{sick_train_data}_{args.word_embedding}_baseline.pkl'
-        test_data = f'{sick_test_data}_{args.word_embedding}_baseline.pkl'
-        predictor = BaselineWrapper(args.model_name, args.saved_models, train_data, test_data, layers, drops, args.baseline_type, embedding_dim=embedding_dim)
-        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr)
-        predictor.train(loss_func, opt_func, args.num_epochs)
-        predictor.save()
-        p, s, i = predictor.test_correlation()
-        print(p[0], s[0])
-
     elif args.task == "worst_predictions":
         predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, train_di, test_di, args.encoder_model, layers=layers, drops=drops)
         worst_predictions(predictor, test_data_raw, k=10)
@@ -787,34 +583,35 @@ if __name__ == "__main__":
             create_pos_lin_visualisations('./visualisations/s6_pos_lin', s2, st2, encoder)
         elif args.encoder_model == "pos_tree":
             create_pos_tree_visualisations('./visualisations/s5_pos_tree', s1, st1, encoder)
-            create_pos_tree_visualisations('./visualisations/s6_pos_tree', s2, st2, encoder)
+            create_pos_tree_visualisations('./visualisations/s6_pos_tree', s2, st2, encoder)s
 
-    elif args.task == "test_sst":
-        train_data = f'./data/sst/train_data_{args.word_embedding}_og.pkl'
-        test_data = f'./data/sst/test_data_{args.word_embedding}_og.pkl'
-        loss_func = nn.CrossEntropyLoss()
-        layers = [embedding_dim, 500, 5]
-        drops = [0, 0]
-        encoder = create_encoder(embedding_dim, args.encoder_model)
-        classifier = DownstreamWrapper(args.model_name, args.saved_models, "sst_classification", train_data, test_data, encoder, layers, drops)
-        opt_func = torch.optim.Adagrad(classifier.model.parameters(), lr=args.lr, weight_decay=args.wd)
-        classifier.train(loss_func, opt_func, 15)
-        classifier.save()
-        print(classifier.test_accuracy())
 
-    elif args.task.startswith("probe"):
-        probing_task = args.task.split("_", 1)[1]
-        train_data = f'./data/senteval_probing/{probing_task}_train_tree.pkl'
-        test_data = f'./data/senteval_probing/{probing_task}_test_tree.pkl'
-        loss_func = nn.CrossEntropyLoss()
-        layers = [embedding_dim, 200, 6]
-        drops = [0, 0]
-        encoder = create_encoder(embedding_dim, args.encoder_model)
-        wrapper = ProbingWrapper(args.model_name, args.saved_models, probing_task, train_data, test_data, encoder, layers, drops)
-        opt_func = torch.optim.SGD(wrapper.model.parameters(), lr=args.lr, weight_decay=args.wd)
-        wrapper.train(loss_func, opt_func, 10)
-        wrapper.save()
-        print(wrapper.test_accuracy())
+    # elif args.task == "test_sst":
+    #     train_data = f'./data/sst/train_data_{args.word_embedding}_og.pkl'
+    #     test_data = f'./data/sst/test_data_{args.word_embedding}_og.pkl'
+    #     loss_func = nn.CrossEntropyLoss()
+    #     layers = [embedding_dim, 500, 5]
+    #     drops = [0, 0]
+    #     encoder = create_encoder(embedding_dim, args.encoder_model)
+    #     classifier = DownstreamWrapper(args.model_name, args.saved_models, "sst_classification", train_data, test_data, encoder, layers, drops)
+    #     opt_func = torch.optim.Adagrad(classifier.model.parameters(), lr=args.lr, weight_decay=args.wd)
+    #     classifier.train(loss_func, opt_func, 15)
+    #     classifier.save()
+    #     print(classifier.test_accuracy())
+
+    # elif args.task.startswith("probe"):
+    #     probing_task = args.task.split("_", 1)[1]
+    #     train_data = f'./data/senteval_probing/{probing_task}_train_tree.pkl'
+    #     test_data = f'./data/senteval_probing/{probing_task}_test_tree.pkl'
+    #     loss_func = nn.CrossEntropyLoss()
+    #     layers = [embedding_dim, 200, 6]
+    #     drops = [0, 0]
+    #     encoder = create_encoder(embedding_dim, args.encoder_model)
+    #     wrapper = ProbingWrapper(args.model_name, args.saved_models, probing_task, train_data, test_data, encoder, layers, drops)
+    #     opt_func = torch.optim.SGD(wrapper.model.parameters(), lr=args.lr, weight_decay=args.wd)
+    #     wrapper.train(loss_func, opt_func, 10)
+    #     wrapper.save()
+    #     print(wrapper.test_accuracy())
 
     elif args.task == "data":
         we = load_glove('./data/glove.840B.300d.txt')
