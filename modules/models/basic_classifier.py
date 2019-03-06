@@ -1,6 +1,6 @@
 from modules.utilities.imports_torch import *
 
-from .linear_block import LinearBlocks
+from .linear_block import LinearBlock
 
 
 class BasicClassifier(nn.Module):
