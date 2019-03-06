@@ -62,43 +62,44 @@ def grid_search_lp(data_source, lp_type, encoder_model, train_ds, text_field, la
     return list(reversed(sorted(results, key=lambda x: x['mean'])))
 
 
-def self_train(dir_to_save, datasets, text_field, label_field, frac, classifier_params, verbose=True):
+def self_feed(dir_to_save, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params):
     """
     Implements a self-training algorithm.
+    Args:
+        dir_to_save (str): directory to save models created/loaded during this process
+        labeled_examples (list(Example)): 
+        unlabeled_examples (list(Example)): 
+        text_field (Field): torchtext field for sentences
+        label_field (LabelField): torchtext LabelField for class labels
+        classifier_params (dict): all params needed to instantiate an intent classifier
+    Returns:
+        augmented labeled examples, accuracy of augmentation, fraction of unlabeled data used in augmentation
     """
-    if verbose:
-        print(f"-------------------------  Performing self-training -------------------------")
-        start_time = time.time()
-
-    train_ds, val_ds, test_ds = datasets
-    examples = train_ds.examples
-    labeled_examples = examples[:int(len(examples)*frac)]
-    unlabeled_examples = examples[int(len(examples)*frac):]
-    example_fields = {'x': ('x', text_field), 'y': ('y', label_field)}
-
+    initial_labeled_num = len(labeled_examples)
+    initial_unlabeled_num = len(unlabeled_examples)
+    num_correct, num_added = 0, 0
+    
     while True:
-        np.random.shuffle(labeled_examples)
         new_train_ds = data.Dataset(labeled_examples, {'x': text_field, 'y': label_field})
         wrapper = train_ic(dir_to_save, text_field, label_field, (new_train_ds, val_ds, test_ds), classifier_params)
         confidences, preds = wrapper.classify_all(unlabeled_examples)
 
         new_unlabeled_examples = []
         for i, (conf, pred) in enumerate(zip(confidences, preds)):
-            if conf > 0.99:
-                labeled_examples.append(Example.fromdict({'x': unlabeled_examples[i].x, 'y': pred}, example_fields))
+            if conf > 0.98: # PLAY AROUND WITH THIS THRESHOLD
+                labeled_examples.append(Example.fromdict({'x': unlabeled_examples[i].x, 'y': pred}, {'x': ('x', text_field), 'y': ('y', label_field)}))
+                num_added += 1
+                if pred == unlabeled_examples[i].y:
+                    num_correct += 1
             else:
                 new_unlabeled_examples.append(unlabeled_examples[i])
-
+        
         if len(unlabeled_examples) - len(new_unlabeled_examples) == 0:
             break
-
         unlabeled_examples = new_unlabeled_examples
+        np.random.shuffle(labeled_examples)
 
-    print(f'# of original labeled: {len(examples)}, # of labeled now: {len(labeled_examples)}')
-    new_train_ds = data.Dataset(labeled_examples, {'x': text_field, 'y': label_field})
-    mean, std, avg_p, avg_r, avg_f = repeat_ic(dir_to_save, text_field, label_field, (new_train_ds, val_ds, test_ds), classifier_params, k=10)
-
-    return mean, std, avg_p, avg_r, avg_f
+    return labeled_examples, float(num_correct/num_added), float(num_added/initial_unlabeled_num)
 
 
 def repeat_augment_and_train(dir_to_save, data_source, aug_algo, encoder_model, datasets, text_field, label_field, frac, classifier_params, k=5):
@@ -128,10 +129,12 @@ def repeat_augment_and_train(dir_to_save, data_source, aug_algo, encoder_model, 
         labeled_examples = examples[:cutoff]
         unlabeled_examples = examples[cutoff:]
 
-        if aug_algo and frac < 1:
+        if aug_algo == "self_feed" and frac < 1:
+            augmented_train_examples, aug_acc, frac_used = self_feed(dir_to_save, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params)
+            aug_accs.append(aug_acc); aug_fracs.append(frac_used)
+        elif aug_algo and frac < 1:
             augmented_train_examples, aug_acc, frac_used = augment(data_source, aug_algo, encoder_model, labeled_examples, unlabeled_examples, train_ds, text_field, label_field)
-            aug_accs.append(aug_acc)
-            aug_fracs.append(frac_used)
+            aug_accs.append(aug_acc); aug_fracs.append(frac_used)
         else:
             augmented_train_examples = labeled_examples
             aug_accs.append(1)
