@@ -10,7 +10,7 @@ from torchtext import data, vocab
 from tqdm import tqdm
 
 
-__all__ = ['grid_search', 'repeat_trainer']
+__all__ = ['grid_search', 'repeat_trainer', 'traina']
 
 
 def grid_search(get_iter_func, wrapper_class, saved_models, datasets, param_grid, encoder_type, encoder_args, layers, text_field, label_field, frac=1, k=10, verbose=True):
@@ -44,6 +44,19 @@ def grid_search(get_iter_func, wrapper_class, saved_models, datasets, param_grid
     return(reversed(sorted(results, key=lambda x: x['mean'])))
 
 
+def traina(model_name, encoder_model, get_iter_func, wrapper_class, saved_models, loss_func, datasets, text_field, bs, encoder_args, layers, drops, lr, frac=1, verbose=False):
+    """
+    A single training run.
+    """
+    train_ds, val_ds, test_ds = datasets
+    train_di, val_di, test_di = get_iter_func(train_ds, val_ds, test_ds, (bs,bs,bs))
+    wrapper = wrapper_class(model_name, saved_models, 300, text_field.vocab, encoder_model, train_di, val_di, test_di, encoder_args, layers=layers, drops=drops)
+    opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=lr, betas=(0.7,0.999), weight_decay=0)
+    wrapper.train(loss_func, opt_func, verbose=verbose)
+    
+    return wrapper
+
+
 def repeat_trainer(model_name, encoder_model, get_iter_func, wrapper_class, saved_models, loss_func, datasets, text_field, label_field, bs, encoder_args, layers, drops, lr, frac=1, k=10, verbose=True):
     """
     Function to perform multiple training runs (for model validation).
@@ -75,10 +88,7 @@ def repeat_trainer(model_name, encoder_model, get_iter_func, wrapper_class, save
         examples = train_ds.examples
         np.random.shuffle(examples)
         new_train_ds = data.Dataset(examples[:int(len(examples)*frac)], {'x': text_field, 'y': label_field})
-        train_di, val_di, test_di = get_iter_func(new_train_ds, val_ds, test_ds, (bs,bs,bs))
-        wrapper = wrapper_class(name, saved_models, 300, text_field.vocab, encoder_model, train_di, val_di, test_di, encoder_args, layers=layers, drops=drops)
-        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=lr, betas=(0.7, 0.999), weight_decay=0)
-        train_losses, test_losses = wrapper.train(loss_func, opt_func, verbose=False)
+        traina(name, encoder_model, get_iter_func, wrapper_class, saved_models, loss_func, (new_train_ds, val_ds, test_ds), text_field, bs, encoder_args, layers, drops, lr, False)
 
     if verbose:
         elapsed_time = time.time() - start_time
