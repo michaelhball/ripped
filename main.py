@@ -24,7 +24,6 @@ parser.add_argument('--model_name', type=str, default='999', help='name of model
 parser.add_argument('--encoder_model', type=str, default='pos_tree', help='encoder model for primary task')
 parser.add_argument('--frac', type=float, default=1, help='fraction of training data to use')
 parser.add_argument('--predictor_model', type=str, default='mlp', help='mlp / cosine_sim')
-
 args = parser.parse_args()
 
 
@@ -43,7 +42,7 @@ def get_results(algorithm, data_source, classifier, encoder=None, similarity_mea
     if algorithm is 'supervised':
         results_name = f'{data_source}__supervised__{classifier}'
     else:
-        results_name = f'{data_source}_{algorithm}__{encoder}__{similarity_measure}__{classifier}'
+        results_name = f'{data_source}__{algorithm}__{encoder}__{similarity_measure}__{classifier}'
     
     return all_results[results_name]
 
@@ -89,6 +88,14 @@ if __name__ == "__main__":
         glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
         TEXT.build_vocab(train_ds, vectors=glove_embeddings)
 
+        # ################################################################################################
+        # # finding best parameters for label propagation algorithm for a given fraction.
+        # results = grid_search_lp(data_source, 'propagation', args.encoder_model, train_ds, TEXT, LABEL, 0.1)
+        # print("BEST 5 PARAM SETTINGS:")
+        # print(results[:5])
+        # assert(False)
+        # ################################################################################################
+
         # pool_max intent classifier for for each learning method.
         classifier_params = {
             'model_name': 'test',
@@ -102,42 +109,66 @@ if __name__ == "__main__":
         }
 
         # run augmentation trials
-        aug_algo = 'knn' # 'knn'|'label_propagation'|None
+        aug_algo = 'self_feed' # 'label_prop__propagation' # 'knn'|'label_propagation__['propagation'|'spreading']'|None
         dir_to_save = f'{args.saved_models}/ic/{data_source}'
 
         class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds = [],[],[],[]
         p_means, p_stds, r_means, r_stds, f1_means, f1_stds = [],[],[],[],[],[]
+        aug_frac_means = []
         for FRAC in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05):
-            class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, p_mean, p_std, r_mean, r_std, f1_mean, f1_std = repeat_augment_and_train(dir_to_save, data_source, aug_algo, args.encoder_model, (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, classifier_params, k=5)
+            # print(self_train(dir_to_save, (train_ds,val_ds,test_ds), TEXT, LABEL, FRAC, classifier_params, verbose=False))
+            # assert(False)
+            class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, p_mean, p_std, r_mean, r_std, f1_mean, f1_std, aug_frac_mean = repeat_augment_and_train(dir_to_save, data_source, aug_algo, args.encoder_model, (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, classifier_params, k=5)
             class_acc_means.append(class_acc_mean); class_acc_stds.append(class_acc_std)
             aug_acc_means.append(aug_acc_mean); aug_acc_stds.append(aug_acc_std)
             p_means.append(p_mean); r_means.append(r_mean); f1_means.append(f1_mean)
             p_stds.append(p_std); r_stds.append(r_std); f1_stds.append(f1_std)
+            aug_frac_means.append(aug_frac_mean)
         
-        # print all results
-        for stat in (class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds, p_means, p_stds, r_means, r_stds, f1_means, f1_stds):
+        for stat in (class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds, aug_frac_means, p_means, p_stds, r_means, r_stds, f1_means, f1_stds):
             print(stat)
 
 
     elif args.task == "plot_results":
         ss_methods = {
-            "knn-BERT": {
-                "algorithm": "knn_all",
-                "encoder": "bert",
-                "similarity": "cosine",
-                "colour": "b-"
-            },
-            "knn-ELMo": {
-                "algorithm": "knn_all",
-                "encoder": "elmo",
-                "similarity": "cosine",
-                "colour": "g-"
-            },
-            "knn-GloVe": {
-                "algorithm": "knn_all",
+            # "knn-BERT": {
+            #     "algorithm": "knn_all",
+            #     "encoder": "bert",
+            #     "similarity": "cosine",
+            #     "colour": "b-"
+            # },
+            # "knn-ELMo": {
+            #     "algorithm": "knn_all",
+            #     "encoder": "elmo",
+            #     "similarity": "cosine",
+            #     "colour": "g-"
+            # },
+            # "knn-GloVe": {
+            #     "algorithm": "knn_all",
+            #     "encoder": "glove",
+            #     "similarity": "cosine",
+            #     "colour": "o-"
+            # },
+            "my_lp-GloVe": {
+                "algorithm": "my_lp",
                 "encoder": "glove",
                 "similarity": "cosine",
-                "colour": "o-"
+                "colour": "yo-",
+                'ecolour': 'y'
+            },
+            "my_lp-ELMo": {
+                "algorithm": "my_lp",
+                "encoder": "elmo",
+                "similarity": "cosine",
+                "colour": "bo-",
+                'ecolour': 'b'
+            },
+            "self_feed": {
+                "algorithm": "self_feed",
+                "encoder": "",
+                "similarity": "",
+                "colour": "go-",
+                "ecolour": "g"
             }
         }
         data_source = 'chat'
@@ -530,7 +561,7 @@ if __name__ == "__main__":
             create_pos_lin_visualisations('./visualisations/s6_pos_lin', s2, st2, encoder)
         elif args.encoder_model == "pos_tree":
             create_pos_tree_visualisations('./visualisations/s5_pos_tree', s1, st1, encoder)
-            create_pos_tree_visualisations('./visualisations/s6_pos_tree', s2, st2, encoder)s
+            create_pos_tree_visualisations('./visualisations/s6_pos_tree', s2, st2, encoder)
 
 
     # elif args.task == "test_sst":
