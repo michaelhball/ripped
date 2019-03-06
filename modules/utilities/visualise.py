@@ -21,21 +21,16 @@ def plot_against_supervised(ss_methods, data_source, classifier, get_results_fun
     fracs = baseline_results['fracs']
     baseline_means = baseline_results[f'{to_plot}_means']
     baseline_cis = [confidence_interval(0.95, std, 10) for std in baseline_results[f'{to_plot}_stds']]
-    plt.errorbar(fracs, baseline_means, yerr=baseline_cis, fmt='r-', ecolor='black', elinewidth=0.5, capsize=1, label=f'fully supervised ({classifier})')
+    plt.errorbar(fracs, baseline_means, yerr=baseline_cis, fmt='ro-', ecolor='red', elinewidth=0.5, capsize=1, label=f'fully supervised ({classifier})')
 
-    # need a list of matplotlib colors here so I can generate a different one for each... or have colors stored in ss_methods somehow...
-    for method_name, v in ss_methods:
-        results = get_results_func(v['algorithm'], data_source, v['encoder'], v['similarity_measure'], classifier)
+    for method_name, v in ss_methods.items():
+        results = get_results_func(v['algorithm'], data_source, classifier, encoder=v['encoder'], similarity_measure=v['similarity'])
         means = [baseline_means[0]] + results[f'{to_plot}_means']
         cis = [baseline_cis[0]] + [confidence_interval(0.95, std, 10) for std in results[f'{to_plot}_stds']]
-        plt.errorbar(fracs, means, yerr=cis, fmt=v['colour'], ecolor='black', elinewidth=0.5, capsize=1, label=f'{method_name}')
-
-    # fig, ax = plt.subplots()
-    # ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-    # ax.set(xlabel='epoch number', ylabel='average loss', title='train/test losses')
+        plt.errorbar(fracs, means, yerr=cis, fmt=v['colour'], ecolor=v['ecolour'], elinewidth=0.5, capsize=1, label=f'{method_name}')
 
     plot_name = ' '.join(to_plot.split('_'))
-    plt.title(f'{task_name} on different fractions of labeled data.') # include data_source + classifier info in title ultimately.
+    plt.title(f'{plot_name} on different fractions of labeled data.') # include data_source + classifier info in title ultimately.
     plt.ylabel(plot_name)
     plt.xticks([0.1*i for i in range(0,11)])
     plt.xlabel('fraction of labeled data')
