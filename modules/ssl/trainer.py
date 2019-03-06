@@ -7,7 +7,7 @@ from torchtext.data.example import Example
 from modules.data_iterators import get_ic_data_iterators
 from modules.models import create_encoder
 from modules.model_wrappers import IntentWrapper
-from modules.utilities import repeat_trainer
+from modules.utilities import repeat_trainer, traina
 
 from modules.utilities.imports import *
 from modules.utilities.imports_torch import *
@@ -16,7 +16,7 @@ from .label_propagation import label_prop_classify, LabelProp
 from .knn import knn_classify
 
 
-__all__ = ['repeat_augment_and_train', 'grid_search_lp']
+__all__ = ['repeat_augment_and_train', 'grid_search_lp', 'self_train']
 
 
 def grid_search_lp(data_source, lp_type, encoder_model, train_ds, text_field, label_field, frac):
@@ -62,6 +62,45 @@ def grid_search_lp(data_source, lp_type, encoder_model, train_ds, text_field, la
     return list(reversed(sorted(results, key=lambda x: x['mean'])))
 
 
+def self_train(dir_to_save, datasets, text_field, label_field, frac, classifier_params, verbose=True):
+    """
+    Implements a self-training algorithm.
+    """
+    if verbose:
+        print(f"-------------------------  Performing self-training -------------------------")
+        start_time = time.time()
+
+    train_ds, val_ds, test_ds = datasets
+    examples = train_ds.examples
+    labeled_examples = examples[:int(len(examples)*frac)]
+    unlabeled_examples = examples[int(len(examples)*frac):]
+    example_fields = {'x': ('x', text_field), 'y': ('y', label_field)}
+
+    while True:
+        np.random.shuffle(labeled_examples)
+        new_train_ds = data.Dataset(labeled_examples, {'x': text_field, 'y': label_field})
+        wrapper = train_ic(dir_to_save, text_field, label_field, (new_train_ds, val_ds, test_ds), classifier_params)
+        confidences, preds = wrapper.classify_all(unlabeled_examples)
+
+        new_unlabeled_examples = []
+        for i, (conf, pred) in enumerate(zip(confidences, preds)):
+            if conf > 0.99:
+                labeled_examples.append(Example.fromdict({'x': unlabeled_examples[i].x, 'y': pred}, example_fields))
+            else:
+                new_unlabeled_examples.append(unlabeled_examples[i])
+
+        if len(unlabeled_examples) - len(new_unlabeled_examples) == 0:
+            break
+
+        unlabeled_examples = new_unlabeled_examples
+
+    print(f'# of original labeled: {len(examples)}, # of labeled now: {len(labeled_examples)}')
+    new_train_ds = data.Dataset(labeled_examples, {'x': text_field, 'y': label_field})
+    mean, std, avg_p, avg_r, avg_f = repeat_ic(dir_to_save, text_field, label_field, (new_train_ds, val_ds, test_ds), classifier_params, k=10)
+
+    return mean, std, avg_p, avg_r, avg_f
+
+
 def repeat_augment_and_train(dir_to_save, data_source, aug_algo, encoder_model, datasets, text_field, label_field, frac, classifier_params, k=5):
     """
     Runs k trials of augmentation & repeat-classification for a given fraction of labeled training data.
@@ -83,7 +122,6 @@ def repeat_augment_and_train(dir_to_save, data_source, aug_algo, encoder_model, 
     means, stds = [], []
     ps, rs, fs = [], [], []
     for i in range(k):
-        print(f"Augmentation run # {i+1}")
         examples = train_ds.examples
         np.random.shuffle(examples)
         cutoff = int(frac*len(examples))
@@ -132,6 +170,7 @@ def augment(data_source, aug_algo, encoder_model, labeled_examples, unlabeled_ex
     if aug_algo == "knn":
         classifications, num_correct = knn_classify(5, xs_l, ys_l, xs_u, ys_u, weights='uniform', distance_metric='euclidean')
     elif aug_algo == "my_label_prop":
+        # perhaps I need to recur here and do the LP again (assuming correctness of new labels) if there's a sufficient number of unused unlabeled examples.
         lp = LabelProp(xs_l, ys_l, xs_u, 21) # hardcoded number of classes
         lp.propagate()
         classifications, indices = lp.classify(ys_u,threshold=True)
@@ -190,6 +229,19 @@ def create_pretrained_embeddings(train_ds, text_field, data_source, embedding_ty
         embeddings = {' '.join(eg.x): emb for eg, emb in zip(train_ds.examples, embs)}
 
     pickle.dump(embeddings, Path('./data/ic/{data_source}/{embedding_type}_embeddings.pkl').open('wb'))
+
+
+def train_ic(dir_to_save, text_field, label_field, datasets, classifier_params):
+    """
+    To simplify training (connection to generic training utility with appropriate parameters).
+    # ULTIMATELY, classifier_params should just be able to be passed to this train method along with other
+    # stuff and THAT method is what sorts it all out... but this is fine for now.s
+    """
+    ps = classifier_params
+    wrapper = traina(ps['model_name'], ps['encoder_model'], get_ic_data_iterators, IntentWrapper, dir_to_save,
+                    nn.CrossEntropyLoss(), datasets, text_field, ps['bs'], ps['encoder_args'],
+                    ps['layers'], ps['drops'], ps['lr'], frac=1, verbose=False)
+    return wrapper
 
 
 def repeat_ic(dir_to_save, text_field, label_field, datasets, classifier_params, k=10):
