@@ -4,7 +4,7 @@ from torchtext.data.example import Example
 from modules.utilities.imports import *
 
 
-__all__ == ["IntentClassificationDataReader"]
+__all__ = ["IntentClassificationDataReader"]
 
 
 class IntentClassificationDataReader():

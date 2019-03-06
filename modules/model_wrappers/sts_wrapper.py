@@ -9,7 +9,7 @@ from modules.utilities import EarlyStopping
 from .base_wrapper import BaseWrapper
 
 
-__all__ == ["STSWrapper"]
+__all__ = ["STSWrapper"]
 
 
 class STSWrapper(BaseWrapper):

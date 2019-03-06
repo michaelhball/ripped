@@ -10,7 +10,7 @@ from modules.utilities.imports import *
 from .base_wrapper import BaseWrapper
 
 
-__all__ == ["IntentWrapper"]
+__all__ = ["IntentWrapper"]
 
 
 class IntentWrapper(BaseWrapper):
