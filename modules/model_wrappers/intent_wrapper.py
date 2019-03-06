@@ -9,7 +9,6 @@ from modules.utilities.imports import *
 
 from .base_wrapper import BaseWrapper
 
-
 __all__ = ["IntentWrapper"]
 
 
@@ -83,6 +82,21 @@ class IntentWrapper(BaseWrapper):
         
         return float(num_correct/num_examples)
     
+    def classify_all(self, to_classify, load=False):
+        if load:
+            self.create_model()
+            self.load()
+        self.model.eval(); self.model.training = False
+        confidences, preds = [], []
+        for eg in to_classify:
+            input_ = torch.tensor([self.vocab.stoi[t] for t in eg.x]).reshape(len(eg.x), 1)
+            pred = torch.softmax(self.model(input_), dim=1)
+            confidence, pred_idx = torch.max(pred, dim=1)
+            confidences.append(confidence.item())
+            preds.append(pred_idx)
+
+        return confidences, preds
+
     def test_precision_recall_f1(self, load=False):
         if load:
             self.create_model()
