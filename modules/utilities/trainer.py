@@ -99,7 +99,7 @@ def repeat_trainer(model_name, encoder_model, get_iter_func, wrapper_class, save
         name = f'{model_name}_{i}'
         train_di, val_di, test_di = get_iter_func(train_ds, val_ds, test_ds, (bs,bs,bs))
         wrapper = wrapper_class(name, saved_models, 300, text_field.vocab, encoder_model, train_di, val_di, test_di, encoder_args, layers=layers, drops=drops)
-        accuracies.append(wrapper.test_accuracy(load=True))
+        accuracies.append(wrapper.test_accuracy(wrapper.test_di, load=True))
         p, r, f, s = wrapper.test_precision_recall_f1(load=True)
         precisions.append(np.mean(p))
         recalls.append(np.mean(r))

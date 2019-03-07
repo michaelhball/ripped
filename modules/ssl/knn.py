@@ -2,11 +2,10 @@ import numpy as np
 
 from sklearn.neighbors import KNeighborsClassifier
 
+__all__ = ['knn_classify', 'knn_classify_recursive']
 
-__all__ = ['knn_classify']
 
-
-def knn_classify(n, xs_l, ys_l, xs_u, ys_u=None, weights='uniform', distance_metric='euclidean'):
+def knn_classify(n, xs_l, ys_l, xs_u, weights='uniform', distance_metric='euclidean', threshold=None):
     """
     Fits a KNN model to labeled data and output labels for unlabeled data.
     Args:
@@ -18,15 +17,25 @@ def knn_classify(n, xs_l, ys_l, xs_u, ys_u=None, weights='uniform', distance_met
         weights (str): KNN argument
         distance_metric: (str): KNN argument
     Returns:
-        Classifications for the unlabeled data, and accuracy of these
-            classifications if unlabeled labels are given.
+        Classifications for the unlabeled data, and indices of the unlabeled data points that have
+            been labelled.
     """
-    classifier = KNeighborsClassifier(n_neighbors=n, weights=weights, algorithm='auto', metric=distance_metric)
-    classifier.fit(xs_l, ys_l)
-    classifications = classifier.predict(xs_u)
-    if not ys_u is None:
-        num_correct = np.sum(classifications == ys_u)
-    return classifications, num_correct
+    knn_model = KNeighborsClassifier(n_neighbors=n, weights=weights, algorithm='auto', metric=distance_metric)
+    knn_model.fit(xs_l, ys_l)
+    
+    if threshold:
+        classifications, indices = [], []
+        for i, prob in enumerate(knn_model.predict_proba(xs_u)):
+            if np.max(prob) > threshold:
+                classifications.append(np.argmax(prob))
+                indices.append(i)
+    else:
+        classifications = knn_model.predict(xs_u)
+        indices = [i for i in range(len(xs_u))]
+
+    
+    return classifications, indices
 
 
-# Make another function for the recursive version, only giving labels if confidence is high enough
+def knn_classify_recursive(n, xs_l, ys_l, xs_u, weights='uniform', distance_metric='euclidean'):
+    pass

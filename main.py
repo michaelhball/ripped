@@ -13,7 +13,7 @@ from modules.utilities import *
 from modules.utilities.imports import *
 from modules.utilities.imports_torch import *
 
-from results import all_results
+from results import new_results
 
 
 parser = argparse.ArgumentParser(description='PyTorch Dependency-Parse Encoding Model')
@@ -24,6 +24,7 @@ parser.add_argument('--model_name', type=str, default='999', help='name of model
 parser.add_argument('--encoder_model', type=str, default='pos_tree', help='encoder model for primary task')
 parser.add_argument('--frac', type=float, default=1, help='fraction of training data to use')
 parser.add_argument('--predictor_model', type=str, default='mlp', help='mlp / cosine_sim')
+parser.add_argument('--aug_algo', type=str, default='none', help='none|knn_all|my_lp|self_feed|')
 args = parser.parse_args()
 
 
@@ -44,7 +45,7 @@ def get_results(algorithm, data_source, classifier, encoder=None, similarity_mea
     else:
         results_name = f'{data_source}__{algorithm}__{encoder}__{similarity_measure}__{classifier}'
     
-    return all_results[results_name]
+    return new_results[results_name]
 
 
 ####################################################################################################################################################################################################################################################################################################################################
@@ -57,20 +58,49 @@ def get_results(algorithm, data_source, classifier, encoder=None, similarity_mea
 ####################################################################################################################################################################################################################################################################################################################################
 ####################################################################################################################################################################################################################################################################################################################################
 ####################################################################################################################################################################################################################################################################################################################################
+
+def t(nlp, s):
+    return [t.text.lower() for t in nlp(str(s))]
 
 
 if __name__ == "__main__":
+    import spacy
+    nlp = spacy.load('en')
+    
+    assert(False)
 
-    # embedding_dim = 300
-    # layers = [2*embedding_dim, 250, 1]
-    # drops = [0, 0]
-    # sick_train_data = './data/sts/sick/train_data'
-    # sick_test_data = './data/sts/sick/test_data'
-    # train_data_raw = pickle.load(Path('./data/sts/sick/train.pkl').open('rb'))
-    # test_data_raw = pickle.load(Path('./data/sts/sick/test.pkl').open('rb'))s
-    # di_suffix = {"pos_lin": "og", "pos_tree": "trees", "dep_tree": "trees"}
-    # train_di = EasyIterator(f'{sick_train_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl')
-    # test_di = EasyIterator(f'{sick_test_data}_{args.word_embedding}_{di_suffix[args.encoder_model]}.pkl', randomise=False)
+    # I have tknsd datasets for sick and sts benchmark... 
+    # firstly I'll try training models on them individually, and evaluating success,
+    # then I can try creating a dataset combining the two of them. 
+
+    # I think an interesting experiment would be to see the representational power of encodings trained to predict similarity... 
+    # and then I naturally get two similarity measures: the similarity predictor itself, or just cosine over the encodings.
+    # I want the sentence embedding to be a higher dimension than 300 here, e.g. perhaps it's the absolute difference & elt-wise appended? (of hidden states).
+    # And I also have the bidirectional feature here too...
+    # add an attention layer?? This could be cool.
+
+    # create a dataset using examples from both of these? Try and get ~even numbers from both datasets, but other than that I guess I can't worry too much
+    # about class balance (or could do this in buckets)?
+    
+    # MODELS TO TRY for STS/NLI:
+    # Idea: use pre-trained Infersent and then just put a big classifier over this? Because Infersent is trained on SNLI, => should express similarity better.
+    # easiest way is to do the same thing, encode all sentences in our IC datasets and just access these values?
+    # GET SNLI/STS datasets formatted correctly and put in Github (need to use Colab to train a much stronger STS model more quickly...)
+    # Big LSTM model with pooling classifier: initialize with GLoVe
+    # Multi-Task Learning framework (two STS datasets, two NLI datasets) - => two heads with one common encoder (a big, BiLSTM ? initialized with GloVe).
+    
+    # For intent-classification: either use an STS predictor or cosine similarity between these embeddings that should strongly capture notions of semantic similarity.
+
+    with open('./data/nli/snli/train.jsonl') as f:
+        train_data = [json.loads(line) for line in f]
+        train_data = [{'y': x['gold_label'], 'x2': t(nlp, x['sentence1']), 'x2': t(nlp, x['sentence2'])} for x in tqdm(train_data,total=len(train_data))]
+        print(train_data[0])
+        pickle.dump(Path('./data/nli/snli/train_tknsd.pkl'))
+
+
+    assert(False)
+
+
 
     if args.task.startswith("propagater"):
         # params
@@ -88,14 +118,6 @@ if __name__ == "__main__":
         glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
         TEXT.build_vocab(train_ds, vectors=glove_embeddings)
 
-        # ################################################################################################
-        # # finding best parameters for label propagation algorithm for a given fraction.
-        # results = grid_search_lp(data_source, 'propagation', args.encoder_model, train_ds, TEXT, LABEL, 0.1)
-        # print("BEST 5 PARAM SETTINGS:")
-        # print(results[:5])
-        # assert(False)
-        # ################################################################################################
-
         # pool_max intent classifier for for each learning method.
         classifier_params = {
             'model_name': 'test',
@@ -109,72 +131,41 @@ if __name__ == "__main__":
         }
 
         # run augmentation trials
-        aug_algo = 'self_feed' # 'label_prop__propagation' # 'knn'|'label_propagation__['propagation'|'spreading']'|None
+        aug_algo = args.aug_algo
         dir_to_save = f'{args.saved_models}/ic/{data_source}'
-
-        class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds = [],[],[],[]
-        p_means, p_stds, r_means, r_stds, f1_means, f1_stds = [],[],[],[],[],[]
-        aug_frac_means = []
+        class_acc_means, class_acc_stds = [],[]
+        aug_acc_means, aug_acc_stds, aug_frac_means = [], [], []
+        p_means, p_stds, r_means, r_stds, f_means, f_stds = [],[],[],[],[],[]
         for FRAC in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05):
-            # print(self_train(dir_to_save, (train_ds,val_ds,test_ds), TEXT, LABEL, FRAC, classifier_params, verbose=False))
-            # assert(False)
-            class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, p_mean, p_std, r_mean, r_std, f1_mean, f1_std, aug_frac_mean = repeat_augment_and_train(dir_to_save, data_source, aug_algo, args.encoder_model, (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, classifier_params, k=5)
+        # for FRAC in [0.05]:
+            class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, aug_frac_mean, p_mean, p_std, r_mean, r_std, f_mean, f_std = repeat_augment_and_train(dir_to_save, data_source, aug_algo, args.encoder_model, (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, classifier_params, k=10)
             class_acc_means.append(class_acc_mean); class_acc_stds.append(class_acc_std)
-            aug_acc_means.append(aug_acc_mean); aug_acc_stds.append(aug_acc_std)
-            p_means.append(p_mean); r_means.append(r_mean); f1_means.append(f1_mean)
-            p_stds.append(p_std); r_stds.append(r_std); f1_stds.append(f1_std)
-            aug_frac_means.append(aug_frac_mean)
+            aug_acc_means.append(aug_acc_mean); aug_acc_stds.append(aug_acc_std); aug_frac_means.append(aug_frac_mean)
+            p_means.append(p_mean); r_means.append(r_mean); f_means.append(f_mean)
+            p_stds.append(p_std); r_stds.append(r_std); f_stds.append(f_std)
+
+        results_obj = pickle.dump({}, Path('./data/ic/chat/results.pkl').open('wb'))
+        results_obj = pickle.load(Path('./data/ic/chat/results.pkl').open('rb'))
         
-        for stat in (class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds, aug_frac_means, p_means, p_stds, r_means, r_stds, f1_means, f1_stds):
+        for stat in (class_acc_means, class_acc_stds, aug_acc_means, aug_acc_stds, aug_frac_means, p_means, p_stds, r_means, r_stds, f_means, f_stds):
             print(stat)
 
 
     elif args.task == "plot_results":
         ss_methods = {
-            # "knn-BERT": {
-            #     "algorithm": "knn_all",
-            #     "encoder": "bert",
-            #     "similarity": "cosine",
-            #     "colour": "b-"
-            # },
-            # "knn-ELMo": {
-            #     "algorithm": "knn_all",
-            #     "encoder": "elmo",
-            #     "similarity": "cosine",
-            #     "colour": "g-"
-            # },
-            # "knn-GloVe": {
-            #     "algorithm": "knn_all",
-            #     "encoder": "glove",
-            #     "similarity": "cosine",
-            #     "colour": "o-"
-            # },
-            "my_lp-GloVe": {
-                "algorithm": "my_lp",
-                "encoder": "glove",
-                "similarity": "cosine",
-                "colour": "yo-",
-                'ecolour': 'y'
-            },
-            "my_lp-ELMo": {
-                "algorithm": "my_lp",
-                "encoder": "elmo",
-                "similarity": "cosine",
-                "colour": "bo-",
-                'ecolour': 'b'
-            },
-            "self_feed": {
-                "algorithm": "self_feed",
-                "encoder": "",
-                "similarity": "",
-                "colour": "go-",
-                "ecolour": "g"
-            }
+            # "LP_t-GLoVe": {'algorithm': 'lp_threshold', "encoder": "glove", "similarity": "cosine", "colour": "bo-", "ecolour":"b"},
+            "LP_r-GLoVe": {'algorithm': 'lp_recursive', 'encoder': 'glove', 'similarity': 'cosine', 'colour': 'go-', 'ecolour': 'g'}
         }
+        # plot SSL methods against baseline
         data_source = 'chat'
         classifier = "pool_max"
         to_plot = "class_acc"
         plot_against_supervised(ss_methods, data_source, classifier, get_results, to_plot=to_plot, display=True, save_file=None)
+        
+        # plot all statistics for a given method
+        # method = {"algorithm": "supervised", 'encoder': None, 'similarity': None, 'colour': 'ro-', 'ecolour': 'r'}
+        # statistics = [("class_acc", 'r'), ("p", 'b'), ("r",'g'), ("f1",'y')] # statistic + color
+        # plot_statistics(method, data_source, classifier, get_results, statistics, display=True, save_file=None)
 
 
     elif args.task.startswith("propagate"):
@@ -397,7 +388,7 @@ if __name__ == "__main__":
         #     for r in csv_reader:
         #         row = list(filter(None, r))
         #         if len(row) == 1:
-        #             test_data.append(row[0].split('\t'))
+        #             test_data.append(row[0].split('\t'))``
         #         else:
         #             test_data.append(''.join(row).split('\t'))
         # test_data = [r[4:7] for r in test_data]
