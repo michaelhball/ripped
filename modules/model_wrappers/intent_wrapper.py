@@ -67,13 +67,13 @@ class IntentWrapper(BaseWrapper):
         
         return total_loss / len(self.val_di)
     
-    def test_accuracy(self, load=False):
+    def test_accuracy(self, di, load=False):
         if load:
             self.create_model()
             self.load()
         self.model.eval(); self.model.training = False
         num_correct, num_examples = 0, 0
-        for batch in iter(self.test_di):
+        for batch in iter(di):
             X, Y = batch.x, batch.y
             pred = self.model(X)
             pred_idx = torch.max(pred, dim=1)[1]
@@ -164,15 +164,16 @@ class IntentWrapper(BaseWrapper):
             avg_val_loss = self.avg_val_loss(loss_func)
             train_losses.append(avg_train_loss)
             val_losses.append(avg_val_loss)
+            # test_acc = self.test_accuracy(self.test_di)
 
             early_stopping(avg_val_loss, self)
             if early_stopping.early_stop:
                 if verbose:
-                    print(f"epoch {e+1}, avg train loss: {avg_train_loss}, avg val loss: {avg_val_loss}, test accuracy: {self.test_accuracy()}")
+                    print(f"epoch {e+1}, avg train loss: {avg_train_loss}, avg val loss: {avg_val_loss}, test accuracy: {test_acc}")
                 break
             
             if verbose:
-                print(f"epoch {e+1}, avg train loss: {avg_train_loss}, avg val loss: {avg_val_loss}, test accuracy: {self.test_accuracy()}")
+                print(f"epoch {e+1}, avg train loss: {avg_train_loss}, avg val loss: {avg_val_loss}, test accuracy: {test_acc}")
 
         if verbose:
             elapsed_time = time.time() - start_time
