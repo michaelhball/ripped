@@ -21,7 +21,6 @@ class EarlyStopping:
         self.min_val_loss = None
 
     def __call__(self, val_loss, wrapper):
-        score = -val_loss
         if self.min_val_loss is None:
             self.min_val_loss = val_loss
             if self.verbose:
