@@ -2,7 +2,7 @@ from modules.utilities.imports_torch import *
 
 
 class LSTMEncoder(nn.Module):
-    def __init__(self, vocab, embedding_dim, hidden_dim, num_layers, bidirectional=False, fine_tune=False):
+    def __init__(self, vocab, embedding_dim, hidden_dim, num_layers, bidirectional=False, fine_tune=False, output_type='max'):
         super().__init__()
         self.batch_size = 1
         self.embedding_dim = embedding_dim
@@ -13,6 +13,7 @@ class LSTMEncoder(nn.Module):
         self.embedding = nn.Embedding.from_pretrained(vocab.vectors)
         self.embedding.weight.requires_grad = fine_tune
         self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers, bidirectional=self.bidirectional)
+        self.output_type = output_type
 
     def one_hidden(self):
         """
@@ -35,8 +36,6 @@ class LSTMEncoder(nn.Module):
         return h.detach() if type(h) == torch.Tensor else tuple(self.repackage_hidden(v) for v in h)
 
     def pool(self, x, batch_size, is_max):
-        """
-        """
         f = F.adaptive_max_pool1d if is_max else F.adaptive_avg_pool1d
         return f(x.permute(1, 2, 0), (1,)).view(batch_size, -1)
 
@@ -49,8 +48,20 @@ class LSTMEncoder(nn.Module):
         with torch.set_grad_enabled(self.training):
             emb = self.embedding(x)
             lstm_out, self.hidden = self.lstm(emb, self.hidden) # (sl, bs, emb_dim) (emb_dim*2 if bidirectional)
+            
             max_pool = self.pool(lstm_out, self.batch_size, True) # bs,emb_dim
-            output = max_pool
+            avg_pool = self.pool(lstm_out, self.batch_size, False) # bs,emb_dim
+
+            if self.output_type == "max":
+                output = max_pool
+            elif self.output_type == "avg":
+                output = avg_pool
+            elif self.output_type == "final":
+                output = lstm_out[-1]
+            elif self.output_type == "both":
+                output = torch.cat([max_pool, avg_pool], 1)
+            elif self.output_type == "all":
+                output = torch.cat([lstm_out[-1, max_pool, avg_pool]], 1)
 
             self.hidden = self.repackage_hidden(self.hidden)
             
