@@ -55,12 +55,13 @@ class STSWrapper(BaseWrapper):
 
     def create_model(self):
         self.model = create_sts_predictor(self.vocab, self.embedding_dim, self.encoder_model, self.predictor_model, self.layers, self.drops, *self.encoder_args)
+        self.model.to(self.device)
 
     def avg_val_loss(self, loss_func):
         self.model.eval(); self.model.training = False
         total_loss = 0.0
         for batch in iter(self.val_di):
-            X1, X2, Y = batch.x1, batch.x2, batch.y
+            X1, X2, Y = batch.x1.to(self.device), batch.x2.to(self.device), batch.y.to(self.device)
             preds = self.model(X1, X2)
             total_loss += loss_func(preds.reshape(-1), Y)
         
@@ -73,7 +74,7 @@ class STSWrapper(BaseWrapper):
         self.model.eval(); self.model.training = False
         preds, scores = [], []
         for batch in iter(self.test_di):
-            X1, X2, Y = batch.x1, batch.x2, batch.y
+            X1, X2, Y = batch.x1.to(self.device), batch.x2.to(self.device), batch.y.to(self.device)
             pred = self.model(X1, X2)
             preds += pred.reshape(-1).tolist()
             scores += Y.float().reshape(-1).tolist()
@@ -87,8 +88,9 @@ class STSWrapper(BaseWrapper):
         self.model.eval(); self.model.training = False
         preds = []
         for eg in to_predict:
-            x1 = torch.tensor([self.vocab.stoi[t] for t in eg.x1].reshape(len(eg.x1), 1))
-            x2 = torch.tensor([self.vocab.stoi[t] for t in eg.x2].reshape(len(eg.x2), 1))
+            x1, x2 = eg['x1'], eg['x2']
+            x1_t = torch.tensor([self.vocab.stoi[t] for t in x1].reshape(len(x1), 1)).to(self.device)
+            x2_t = torch.tensor([self.vocab.stoi[t] for t in x2].reshape(len(x2), 1)).to(self.device)
             pred = torch.softmax(self.model(x1, x2), dim=1)
             preds.append(pred.item())
         
