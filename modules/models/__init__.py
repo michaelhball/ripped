@@ -1,14 +1,6 @@
 from .basic_classifier import BasicClassifier
-from .cosine_sim_sts_predictor import CosineSimSTSPredictor
-from .dep_tree import DEPTree
-from .infersent_encoder import InferSentEncoder
-from .linear_block import LinearBlock
 from .lstm_encoder import LSTMEncoder
-from .multi_task_learner import MultiTaskLearner
-from .pass_encoder import PassEncoder
 from .pool_encoder import PoolEncoder
-from .pos_lin import POSLin
-from .pos_tree import POSTree
 from .sts_predictor import STSPredictor
 
 
@@ -41,16 +33,16 @@ __all__ = ['create_encoder', 'create_sts_predictor', 'create_intent_classifier']
 #     return predictors[predictor_type](PassEncoder(), layers, drops)
 #     # return STSPredictor(PassEncoder(), layers, drops)
 
-def create_multi_task_learner(embedding_dim, encoder_model, sts_dims, nli_dims):
-    if encoder_model == "pretrained":
-        encoder = PassEncoder()
-    else:
-        encoder = dependency_encoders[encoder_model](embedding_dim)
-    return MultiTaskLearner(encoder, sts_dims, nli_dims)
+# def create_multi_task_learner(embedding_dim, encoder_model, sts_dims, nli_dims):
+#     if encoder_model == "pretrained":
+#         encoder = PassEncoder()
+#     else:
+#         encoder = dependency_encoders[encoder_model](embedding_dim)
+#     return MultiTaskLearner(encoder, sts_dims, nli_dims)
+
 
 def create_classifier(layers, drops):
     return BasicClassifier(layers, drops)
-
 
 
 def create_encoder(vocab, embedding_dim, encoder_model, *args):
@@ -58,8 +50,6 @@ def create_encoder(vocab, embedding_dim, encoder_model, *args):
         encoder = PoolEncoder
     elif encoder_model == "lstm":
         encoder = LSTMEncoder
-    elif encoder_model.startswith("infersent"):
-        encoder = InferSentEncoder
     else:
         print(f'encoder type: "{encoder_model}" not implemented')
     

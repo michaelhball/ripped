@@ -12,7 +12,7 @@ __all__ = ["STSWrapper"]
 
 
 class STSWrapper(BaseWrapper):
-    def __init__(self, name, saved_models, embedding_dim, vocab, encoder_model, encoder_args, predictor_model, train_di, val_di, test_di, layers, drops):
+    def __init__(self, name, saved_models, embedding_dim, vocab, encoder_model, encoder_args, predictor_model, layers, drops, train_di, val_di, test_di):
         """
         A class for training a Semantic-Textual Similarity predictor.
         """
