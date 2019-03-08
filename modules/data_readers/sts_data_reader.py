@@ -12,7 +12,6 @@ class STSDataReader():
         self.train_file = train_file
         self.val_file = val_file
         self.test_file = test_file
-        self.full_data = {"train": {}, "val": {}, "test": {}}
         self.fields1 = {'x1': ('x1', text), 'x2': ('x2', text), 'y': ('y', label)}
         self.fields2 = {'x1': text, 'x2': text, 'y': label}
 
@@ -20,7 +19,6 @@ class STSDataReader():
         pkl_data = pickle.load(Path(data_file).open('rb'))
         examples = [Example.fromdict(x, self.fields1) for x in pkl_data]
         dataset = data.Dataset(examples, fields=self.fields2)
-        self.full_data[dataset_type] = dataset
         return dataset
 
     def read(self):

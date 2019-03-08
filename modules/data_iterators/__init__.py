@@ -27,12 +27,11 @@ def get_ic_data_iterators(train_ds, val_ds, test_ds, batch_sizes):
 
 
 def get_sts_data_iterators(train_ds, val_ds, test_ds, batch_sizes):
-    train_di, val_di, test_di = MyIterator.splits(
+    train_di, val_di, test_di = data.BucketIterator.splits(
         (train_ds, val_ds, test_ds),
         batch_sizes=batch_sizes,
         sort_key=lambda eg: (len(eg.x1), len(eg.x2)),
         repeat=False,
-        batch_size_fn=sts_batch_size_fn,
         shuffle=True
     )
 

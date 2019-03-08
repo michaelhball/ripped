@@ -68,7 +68,7 @@ def create_encoder(vocab, embedding_dim, encoder_model, *args):
 
 def create_sts_predictor(vocab, embedding_dim, encoder_model, predictor_model, layers, drops, *args):
     encoder = create_encoder(vocab, embedding_dim, encoder_model, *args)
-    return STSPredictor(encoder, layers, drops) # allow for cosine_sim predictor too via predictor_model
+    return STSPredictor(encoder, layers, drops)
 
 
 def create_intent_classifier(vocab, embedding_dim, encoder_model, layers, drops, *args):

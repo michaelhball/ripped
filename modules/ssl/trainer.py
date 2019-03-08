@@ -198,6 +198,17 @@ def create_pretrained_embeddings(train_ds, text_field, data_source, embedding_ty
             sent = ' '.join(eg.x)
             emb = encoder(idxed.reshape(-1, 1)).detach().squeeze(0).numpy()
             embeddings[sent] = emb
+    elif embedding_type == "infersent":
+        from pretrained_models.infersent.models import InferSent
+        params_model = {'bsize': 64, 'word_emb_dim': 300, 'enc_lstm_dim': 2048,
+                        'pool_type': 'max', 'dpout_model': 0.0, 'version': 1}
+        model = InferSent(params_model)
+        model.load_state_dict(torch.load('/Users/michaelball/Desktop/Thesis/repo/pretrained_models/infersent/infersent1.pkl'))
+        model.set_w2v_path('/Users/michaelball/Desktop/Thesis/repo/data/glove.840B.300d.txt')
+        sentences = [' '.join(eg.x) for eg in train_ds.examples]
+        model.build_vocab(sentences, tokenize=False)
+        emb = model.encode(sentences, bsize=128, tokenize=False, verbose=False)
+        embeddings = {s:e for s,e in zip(sentences, emb)}
     else:
         encoder = {"bert": BertEmbeddings(), "elmo": ELMoEmbeddings()}[embedding_type]
         sents = [Sentence(' '.join(eg.x)) for eg in train_ds.examples]
@@ -205,7 +216,7 @@ def create_pretrained_embeddings(train_ds, text_field, data_source, embedding_ty
         embs = np.array([torch.max(torch.stack([t.embedding for t in S]), 0)[0].detach().numpy() for S in sents])
         embeddings = {' '.join(eg.x): emb for eg, emb in zip(train_ds.examples, embs)}
 
-    pickle.dump(embeddings, Path('./data/ic/{data_source}/{embedding_type}_embeddings.pkl').open('wb'))
+    pickle.dump(embeddings, Path(f'/Users/michaelball/Desktop/Thesis/repo/data/ic/{data_source}/{embedding_type}_embeddings.pkl').open('wb'))
 
 
 def train_ic(dir_to_save, text_field, label_field, datasets, classifier_params, return_statistics=False):

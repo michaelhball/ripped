@@ -66,7 +66,7 @@ class IntentWrapper(BaseWrapper):
             total_loss += loss_func(self.model(X), Y.long())
         
         return total_loss / len(self.val_di)
-    
+
     def test_accuracy(self, di, load=False):
         if load:
             self.create_model()
@@ -164,7 +164,7 @@ class IntentWrapper(BaseWrapper):
             avg_val_loss = self.avg_val_loss(loss_func)
             train_losses.append(avg_train_loss)
             val_losses.append(avg_val_loss)
-            # test_acc = self.test_accuracy(self.test_di)
+            test_acc = self.test_accuracy(self.test_di)
 
             early_stopping(avg_val_loss, self)
             if early_stopping.early_stop:

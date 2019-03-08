@@ -123,10 +123,8 @@ class LabelProp():
         print(f'aug acc: {np.sum(all_classifications == y_u[all_indices])/len(all_classifications)}')
         return all_classifications, all_indices
     
-    def p1nn(self, x_l, y_l, x_u): # NEED TO TEST THIS AS ANOTHER POSSIBLE METHOD
+    def p1nn(self, x_l, y_l, x_u):
         classifications = list(-1 * np.ones(self.nu, dtype=np.float))
-
-        # nodes = [{'x': x, 'y': y} for x,y in zip(x_l,y_l)]
         x_l_labels = {i:y_l[i] for i,_ in enumerate(x_l)}
         
         dist_u_to_l = np.zeros((self.nu,self.n), dtype=np.float)

@@ -11,7 +11,11 @@ class STSPredictor(nn.Module):
         super().__init__()
         self.encoder = encoder
         self.layers = nn.ModuleList([LinearBlock(layers[i], layers[i+1], drops[i]) for i in range(len(layers) - 1)])
-    
+
+    def pool(self, x, batch_size, is_max):
+        f = F.adaptive_max_pool1d if is_max else F.adaptive_avg_pool1d
+        return f(x.permute(1, 2, 0), (1,)).view(batch_size, -1)
+
     def forward(self, x1, x2):
         x1, x2 = self.encoder(x1), self.encoder(x2)
         diff = (x1-x2).abs()

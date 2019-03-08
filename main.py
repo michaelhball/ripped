@@ -64,10 +64,6 @@ def t(nlp, s):
 
 
 if __name__ == "__main__":
-    import spacy
-    nlp = spacy.load('en')
-    
-    assert(False)
 
     # I have tknsd datasets for sick and sts benchmark... 
     # firstly I'll try training models on them individually, and evaluating success,
@@ -91,14 +87,14 @@ if __name__ == "__main__":
     
     # For intent-classification: either use an STS predictor or cosine similarity between these embeddings that should strongly capture notions of semantic similarity.
 
-    with open('./data/nli/snli/train.jsonl') as f:
-        train_data = [json.loads(line) for line in f]
-        train_data = [{'y': x['gold_label'], 'x2': t(nlp, x['sentence1']), 'x2': t(nlp, x['sentence2'])} for x in tqdm(train_data,total=len(train_data))]
-        print(train_data[0])
-        pickle.dump(Path('./data/nli/snli/train_tknsd.pkl'))
+    # with open('./data/nli/snli/train.jsonl') as f:
+    #     train_data = [json.loads(line) for line in f]
+    #     train_data = [{'y': x['gold_label'], 'x2': t(nlp, x['sentence1']), 'x2': t(nlp, x['sentence2'])} for x in tqdm(train_data,total=len(train_data))]
+    #     print(train_data[0])
+    #     pickle.dump(Path('./data/nli/snli/train_tknsd.pkl'))
 
 
-    assert(False)
+    # assert(False)
 
 
 

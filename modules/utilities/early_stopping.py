@@ -25,7 +25,7 @@ class EarlyStopping:
             self.min_val_loss = val_loss
             if self.verbose:
                 print(f'Validation loss decreased ({self.min_val_loss:.6f} --> {val_loss:.6f}).  storing state_dict...')
-            wrapper.save_with_suffix()
+            wrapper.save()
         elif val_loss > self.min_val_loss:
             self.counter += 1
             if self.verbose:
@@ -36,5 +36,5 @@ class EarlyStopping:
             self.min_val_loss = val_loss
             if self.verbose:
                 print(f'Validation loss decreased ({self.min_val_loss:.6f} --> {val_loss:.6f}).  storing state_dict...')
-            wrapper.save_with_suffix()
+            wrapper.save()
             self.counter = 0
