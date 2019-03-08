@@ -60,8 +60,11 @@ class LSTMEncoder(nn.Module):
                 output = lstm_out[-1]
             elif self.output_type == "both":
                 output = torch.cat([max_pool, avg_pool], 1)
+                print(output.shape)
+                print(torch.cat([max_pool, avg_pool], 0).shape)
             elif self.output_type == "all":
-                output = torch.cat([lstm_out[-1, max_pool, avg_pool]], 1)
+                output = torch.cat([lstm_out[-1], max_pool, avg_pool], 1)
+                print(output.shape)
 
             self.hidden = self.repackage_hidden(self.hidden)
             
