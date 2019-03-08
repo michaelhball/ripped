@@ -26,7 +26,6 @@ class STSWrapper(BaseWrapper):
         self.layers, self.drops = layers, drops
         self.train_di, self.val_di, self.test_di = train_di, val_di, test_di
         self.device = torch.device(device_type)
-        self.create_model()
 
     def save(self):
         self.save_model()
@@ -46,8 +45,16 @@ class STSWrapper(BaseWrapper):
         pickle.dump(self.vocab, Path(path).open('wb'))
     
     def load(self):
+        self.load_model()
+        self.load_vocab()
+    
+    def load_model(self):
         path = self.saved_models + f'/{self.name}.pt'
         self.model.load_state_dict(torch.load(path))
+    
+    def self.load_vocab(self):
+        path = self.saved_models + f'/{self.name}_vocab.pkl'
+        self.vocab = pickle.load(Path(path).open('rb'))
 
     def load_encoder(self):
         path = self.saved_models + f'/{self.name}_encoder.pt'
@@ -102,7 +109,7 @@ class STSWrapper(BaseWrapper):
         start_time = time.time()
         train_losses, val_losses, correlations = [], [], []
         early_stopping = EarlyStopping(patience=4, verbose=False)
-        print(self.device)
+        self.create_model()
 
         for e in range(num_epochs):
             self.model.train(); self.model.training = True
