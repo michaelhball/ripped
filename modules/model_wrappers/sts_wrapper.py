@@ -52,7 +52,7 @@ class STSWrapper(BaseWrapper):
         path = self.saved_models + f'/{self.name}.pt'
         self.model.load_state_dict(torch.load(path))
     
-    def self.load_vocab(self):
+    def load_vocab(self):
         path = self.saved_models + f'/{self.name}_vocab.pkl'
         self.vocab = pickle.load(Path(path).open('rb'))
 
