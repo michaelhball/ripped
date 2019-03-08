@@ -12,7 +12,7 @@ __all__ = ["STSWrapper"]
 
 
 class STSWrapper(BaseWrapper):
-    def __init__(self, name, saved_models, embedding_dim, vocab, encoder_model, encoder_args, predictor_model, layers, drops, train_di, val_di, test_di):
+    def __init__(self, name, saved_models, embedding_dim, vocab, encoder_model, encoder_args, predictor_model, layers, drops, train_di, val_di, test_di, device_type='cpu'):
         """
         A class for training a Semantic-Textual Similarity predictor.
         """
@@ -23,8 +23,9 @@ class STSWrapper(BaseWrapper):
         self.encoder_model = encoder_model
         self.encoder_args = encoder_args
         self.predictor_model = predictor_model
-        self.train_di, self.val_di, self.test_di = train_di, val_di, test_di
         self.layers, self.drops = layers, drops
+        self.train_di, self.val_di, self.test_di = train_di, val_di, test_di
+        self.device = torch.device(device_type)
         self.create_model()
 
     def save(self):
@@ -99,6 +100,7 @@ class STSWrapper(BaseWrapper):
         start_time = time.time()
         train_losses, val_losses, correlations = [], [], []
         early_stopping = EarlyStopping(patience=4, verbose=False)
+        print(self.device)
 
         for e in range(num_epochs):
             self.model.train(); self.model.training = True
@@ -107,7 +109,7 @@ class STSWrapper(BaseWrapper):
             for batch in iter(self.train_di):
                 num_batches += 1
                 self.model.zero_grad()
-                X1, X2, Y = batch.x1, batch.x2, batch.y
+                X1, X2, Y = batch.x1.to(self.device), batch.x2.to(self.device), batch.y.to(self.device)
                 preds = self.model(X1, X2)
                 loss = loss_func(preds.reshape(-1), Y)
                 total_loss += loss.item()
