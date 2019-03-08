@@ -3,9 +3,7 @@ from .lstm_encoder import LSTMEncoder
 from .pool_encoder import PoolEncoder
 from .sts_predictor import STSPredictor
 
-
 from torch.nn import Sequential
-
 
 __all__ = ['create_encoder', 'create_sts_predictor', 'create_intent_classifier']
 
