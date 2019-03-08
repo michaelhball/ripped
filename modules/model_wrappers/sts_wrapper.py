@@ -58,7 +58,7 @@ class STSWrapper(BaseWrapper):
     def avg_val_loss(self, loss_func):
         self.model.eval(); self.model.training = False
         total_loss = 0.0
-        for example in iter(self.val_di):
+        for batch in iter(self.val_di):
             X1, X2, Y = batch.x1, batch.x2, batch.y
             preds = self.model(X1, X2)
             total_loss += loss_func(preds.reshape(-1), Y)
