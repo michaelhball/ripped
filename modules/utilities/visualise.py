@@ -2,7 +2,6 @@ import matplotlib.pyplot as plt
 
 from .math import confidence_interval
 
-
 __all__ = ['plot_against_supervised', 'plot_statistics']
 
 
@@ -13,14 +12,18 @@ def plot_against_supervised(ss_methods, data_source, classifier, get_results_fun
         ss_methods (dict(str,dict)): maps ss_method_name to their values (algorithm, encoder, and similarity measure)
         data_source (str): which dataset we're considering
         classifier (str): type of classifier used
-        to_plot (str): indicating what we're plotting (class_acc|p|r|f1)
+        get_results_funct (func): function to get results from results file
+        to_plot (str): statistic we're plotting (class_acc|p|r|f1)
+        title (str): chart title
+        display (bool): whether to display
+        save (bool): optional file for saving chart
     Returns:
         None
     """
     line_styles = ['-', '--', '-.', ':']
 
     baseline_results = get_results_func('supervised', data_source, classifier)
-    fracs = baseline_results['fracs']   
+    fracs = baseline_results['fracs']
     for i, stat in enumerate(to_plot):
         baseline_means = baseline_results[f'{stat}_means']
         baseline_cis = [confidence_interval(0.95, std, baseline_results['n']) for std in baseline_results[f'{stat}_stds']]
@@ -38,7 +41,7 @@ def plot_against_supervised(ss_methods, data_source, classifier, get_results_fun
             plt.errorbar(fracs, means, yerr=cis, fmt=f'{method_color}o{line_styles[i]}', ecolor=method_color, elinewidth=0.8, capsize=1, label=f'{method_name}')
 
     plt.title(title)
-    plt.ylabel(plot_name)
+    plt.ylabel('f1')
     plt.xticks([0.1*i for i in range(0,11)])
     plt.xlabel('fraction of labeled data')
     plt.legend()
