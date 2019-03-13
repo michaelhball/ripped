@@ -38,8 +38,8 @@ def self_feed(data_source, dir_to_save, labeled_examples, unlabeled_examples, va
             confidences, preds = do_basic_train_and_classify(new_train_ds, test_ds_temp, classifier_params, return_statistics=False)
         else:
             ps = classifier_params
-            args = [ps['model_name'], ps['encoder_model'], get_ic_data_iterators, IntentWrapper, dir_to_save, nn.CrossEntropyLoss(), 
-                    (new_train_ds, val_ds, test_ds), text_field, ps['bs'], ps['encoder_args'], ps['layers'], ps['drops'], ps['lr']]
+            args = [ps['model_name'], ps['encoder_model'], get_ic_data_iterators, IntentWrapper, dir_to_save, nn.CrossEntropyLoss(),
+                        (new_train_ds, val_ds, test_ds), text_field, ps['bs'], ps['encoder_args'], ps['layers'], ps['drops'], ps['lr']]
             wrapper = traina(*args, frac=1, verbose=False)
             confidences, preds = wrapper.classify_all(unlabeled_examples)
 
