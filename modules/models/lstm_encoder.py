@@ -4,7 +4,7 @@ from modules.utilities.imports_torch import *
 class LSTMEncoder(nn.Module):
     def __init__(self, vocab, embedding_dim, hidden_dim, num_layers, bidirectional=False, fine_tune=False, output_type='max'):
         super().__init__()
-        self.batch_size = 1
+        self.batch_size = 0
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
