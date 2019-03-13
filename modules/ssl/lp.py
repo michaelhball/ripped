@@ -2,31 +2,80 @@ import math
 import numpy as np
 import warnings
 
+from modules.models import create_sts_predictor
 from modules.utilities import euclid
+from modules.utilities.imports import *
+from modules.utilities.imports_torch import *
+
+
+def get_sts_model(source):
+    vocab = pickle.load(Path(f'./data/sts/{source}/pretrained/vocab.pkl').open('rb'))
+    params = pickle.load(Path(f'./data/sts/{source}/pretrained/params.pkl').open('rb'))
+
+    enc_params, pred_params = params['encoder'], params['predictor']
+    emb_dim, hid_dim = enc_params['emb_dim'], enc_params['hid_dim']
+    num_layers, output_type = enc_params['num_layers'], enc_params['output_type']
+    bidir, fine_tune = enc_params['bidir'], enc_params['fine_tune']
+    layers, drops = pred_params['layers'], pred_params['drops']
+
+    enc_args = [hid_dim, num_layers, bidir, fine_tune, output_type]
+    model = create_sts_predictor(vocab, emb_dim, 'lstm', 'mlp', layers, drops, *enc_args)
+    model.load_state_dict(torch.load(f'./data/sts/{source}/pretrained/weights.pt', map_location=lambda storage, loc: storage))
+    model.eval()
+    
+    return model
+
+
+def sts_dist(model, u, v):
+    u, v = torch.tensor([u]), torch.tensor([v])
+    diff = (u-v).abs()
+    mult = u * v
+    x = torch.cat((diff, mult), 1)
+    for l in model.layers:
+        l_x = l(x)
+        x = F.relu(l_x)
+
+    sim = l_x.item()
+    if sim <= 0:
+        sim = 0.01
+
+    return 1/(sim/5)
+
+
+MODEL = None
 
 
 class LabelProp():
-    def __init__(self, x_l, y_l, x_u, nc):
+    def __init__(self, x_l, y_l, x_u, nc, sim_measure='cosine', source=None):
         """
         Class for implementation of original label propagation algorithm.
         """
+        if sim_measure == "sts":
+            global MODEL
+            if MODEL is None:
+                MODEL = get_sts_model(source)
+        self.sim_measure = sim_measure
+
         self.nl, self.nu, self.n = len(x_l), len(x_u), len(x_l)+len(x_u)
         self.nc = nc
         self.T = np.zeros((self.n,self.n), dtype=np.float)
         self.Y = np.zeros((self.n,self.nc), dtype=np.float)
 
         # initialise T
-        ss = math.pow(self._calculate_sigma(x_l,y_l), 2)
+        self.ss = math.pow(self._calculate_sigma(x_l,y_l), 2)
+        # print(self.ss)
+        # self.ss = 0.007
+        self.ss /= 3
         for i, u in enumerate(x_l):
             for j, v in enumerate(x_l):
-                self.T[i,j] = self._lp_dist(u, v, ss)
+                self.T[i,j] = self._lp_dist(u, v)
             for k, z in enumerate(x_u):
-                dist = self._lp_dist(u, z, ss)
+                dist = self._lp_dist(u, z)
                 self.T[i,self.nl+k] = dist
                 self.T[self.nl+k,i] = dist
         for i, u in enumerate(x_u):
             for j, v in enumerate(x_u):
-                self.T[self.nl+i,self.nl+j] = self._lp_dist(u, v, ss)
+                self.T[self.nl+i,self.nl+j] = self._lp_dist(u, v)
 
         self.T /= self.T.sum(axis=0)[np.newaxis,:] # column norm
         self.T /= self.T.sum(axis=1)[:,np.newaxis] # row norm
@@ -36,15 +85,19 @@ class LabelProp():
         for i, _ in enumerate(x_l):
             for j in range(self.nc):
                 self.Y[i,j] = 1 if j == y_l[i] else 0
-        for i in range(self.nu):
-            self.Y[self.nl+i] = 0
         self.Y_static = self.Y[:self.nl]
+    
+    def _dist_func(self, u, v):
+        if self.sim_measure == "cosine":
+            return euclid(u, v)
+        elif self.sim_measure == 'sts':
+            return sts_dist(MODEL, u, v)
 
-    def _calculate_sigma(self, x_l, y_l): # MST METHOD
+    def _calculate_sigma(self, x_l, y_l):
         D = np.zeros((self.nl,self.nl), dtype=np.float)
         for i, u in enumerate(x_l):
             for j, v in enumerate(x_l):
-                D[i,j] = euclid(u, v)
+                D[i,j] = self._dist_func(u, v)
         
         min_dist = float('inf')
         for i in range(self.nl):
@@ -54,11 +107,10 @@ class LabelProp():
             
         return min_dist / 3
     
-    def _lp_dist(self, u, v, ss):
-        return np.exp(-(euclid(u,v)/ss))
+    def _lp_dist(self, u, v):
+        return np.exp(-(self._dist_func(u,v)/self.ss))
     
     def propagate(self, tol=0.0001, max_iter=10000):
-        # iterative solution
         Y_prev = np.zeros((self.n,self.nc),dtype=np.float)
         for i in range(max_iter):
             if np.abs(self.Y-Y_prev).sum() < tol: break
@@ -68,21 +120,6 @@ class LabelProp():
             self.Y[:self.nl] = self.Y_static # clamp labels
         else:
             warnings.warn(f'max_iter ({max_iter}) was reached without convergence')
-        
-        self.Y[self.nl:] /= self.Y[self.nl:].sum(axis=1)[:, np.newaxis] # normalise predictions
-
-        # # optimisation solution (inverse can't be calculated here => need to work this out some other way...)
-        # T_uu = self.T[self.nl:,self.nl:]
-        # T_ul = self.T[self.nl:,:self.nl]
-        # Y_l = self.Y[:self.nl]
-        # I = np.identity(self.nu, dtype=np.float)
-        # print(I.shape)
-        # print(T_uu.shape)
-        # print((I-T_uu).shape)
-        # a = np.linalg.inv((I - T_uu))
-        # b = np.matmul(a, T_ul)
-        # c = np.matmul(b, Y_l)
-        # self.Y[self.nl:] = c # solution for Y_uu
     
     def recursive(self, x_l, y_l, x_u, y_u, tol=0.0001, max_iter=10000):
         x_indices = {str(x):i for i, x in enumerate(x_u)} # indices in orignial unlabeled set.
@@ -96,11 +133,6 @@ class LabelProp():
             self.__init__(xl, yl, xu, 21)
             self.propagate(tol, max_iter)
             classifications, indices = self.classify(threshold=True)
- 
-            # print(self.n,self.nl,self.nu)
-            # print(f'aug frac: {float(len(classifications)/len(xu))}')
-            # aug_acc = 0 if not classifications else np.sum(classifications == yu[indices])/len(classifications)
-            # print(f'aug acc: {aug_acc}')
 
             # add correct indices to overall indices
             all_classifications += classifications
@@ -119,13 +151,11 @@ class LabelProp():
                 break
             last_unlabeled_count = len(xu)
         
-        print(f'aug frac: {float(len(all_classifications)/len(x_u))}')
-        print(f'aug acc: {np.sum(all_classifications == y_u[all_indices])/len(all_classifications)}')
         return all_classifications, all_indices
     
     def p1nn(self, x_l, y_l, x_u):
         classifications = list(-1 * np.ones(self.nu, dtype=np.float))
-        x_l_labels = {i:y_l[i] for i,_ in enumerate(x_l)}
+        x_l_labels = {i:y_l[i] for i, _ in enumerate(x_l)}
         
         dist_u_to_l = np.zeros((self.nu,self.n), dtype=np.float)
         for i, u in enumerate(x_u):
@@ -135,7 +165,6 @@ class LabelProp():
                 dist_u_to_l[i,self.nl+k] = float('inf')
 
         classified = set()
-
         while True:
             closest_row, closest_col = -1, -1
             closest_dist = float('inf')
@@ -168,26 +197,14 @@ class LabelProp():
         preds = self.classify(y_u)
         return np.sum(preds == y_u) / len(preds)
     
-    def classify(self, threshold=False):
-        # CLASS MASS NORMALIZATION
-        # class_proportions_oracle = [0.017, 0.025, 0.017, 0.008, 0.017, 0.017, 0.008, 0.008, 0.116, 0.033, 0.05, 0.174, 0.058, 0.058, 0.017, 0.05, 0.033, 0.058, 0.083, 0.066, 0.091]
-        # # class_proportions_train = [0.018, 0.023, 0.01, 0.005, 0.016, 0.009, 0.006, 0.006, 0.123, 0.031, 0.053, 0.183, 0.055, 0.055, 0.012, 0.048, 0.036, 0.061, 0.085, 0.069, 0.093]
-        # for i, cp in enumerate(class_proportions_oracle):
-        #     self.Y[:,i] *= cp
-        # self.Y[self.nl:] /= self.Y[self.nl:].sum(axis=1)[:, np.newaxis] # normalise predictions
+    def classify(self, threshold=True):
+        self.Y[self.nl:] /= self.Y[self.nl:].sum(axis=1)[:, np.newaxis] # normalise predictions
+        indices, preds = [], []
+        for i, row in enumerate(self.Y[self.nl:]):
+            THRESH = 0.9 if threshold else 0
+            # print(np.max(row))
+            if np.max(row) >= THRESH:
+                indices.append(i)
+                preds.append(np.argmax(row))
 
-        # LABEL BIDDING
-
-        # MAXIMUM LIKELIHOOD (nothing extra before classification)
-        
-        if threshold:
-            indices, preds = [], []
-            for i, row in enumerate(self.Y[self.nl:]):
-                if np.max(row) == 1: # i.e. if the algorithm is 'certain' (this threshold might need to be different for different encoding/similarity measures)
-                    indices.append(i)
-                    preds.append(np.argmax(row))
-            return preds, indices
-
-        return np.argmax(self.Y[self.nl:], axis=1)
-
-
+        return preds, indices
