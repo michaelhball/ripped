@@ -6,7 +6,7 @@ from .math import confidence_interval
 __all__ = ['plot_against_supervised', 'plot_statistics']
 
 
-def plot_against_supervised(ss_methods, data_source, classifier, get_results_func, to_plot='class_acc', display=True, save_file=None):
+def plot_against_supervised(ss_methods, data_source, classifier, get_results_func, to_plot='f1', title='doot', display=True, save_file=None):
     """
     Function to plot results of one test against fully supervised.
     Args:
@@ -37,9 +37,7 @@ def plot_against_supervised(ss_methods, data_source, classifier, get_results_fun
             cis = [baseline_results[f'{stat}_stds'][0]] + [confidence_interval(0.95, std, results['n']) for std in results[f'{stat}_stds']]
             plt.errorbar(fracs, means, yerr=cis, fmt=f'{method_color}o{line_styles[i]}', ecolor=method_color, elinewidth=0.8, capsize=1, label=f'{method_name}')
 
-    plot_name = 'F1'
-    # plt.title(f'{plot_name} on different fractions of labeled data.') # include data_source + classifier info in title ultimately.
-    plt.title(f'Chatbot: STS-both')
+    plt.title(title)
     plt.ylabel(plot_name)
     plt.xticks([0.1*i for i in range(0,11)])
     plt.xlabel('fraction of labeled data')
