@@ -17,20 +17,29 @@ def plot_against_supervised(ss_methods, data_source, classifier, get_results_fun
     Returns:
         None
     """
+    line_styles = ['-', '--', '-.', ':']
+
     baseline_results = get_results_func('supervised', data_source, classifier)
-    fracs = baseline_results['fracs']
-    baseline_means = baseline_results[f'{to_plot}_means']
-    baseline_cis = [confidence_interval(0.95, std, 10) for std in baseline_results[f'{to_plot}_stds']]
-    plt.errorbar(fracs, baseline_means, yerr=baseline_cis, fmt='ro-', ecolor='red', elinewidth=0.8, capsize=1, label=f'fully supervised ({classifier})')
+    fracs = baseline_results['fracs']   
+    for i, stat in enumerate(to_plot):
+        baseline_means = baseline_results[f'{stat}_means']
+        baseline_cis = [confidence_interval(0.95, std, baseline_results['n']) for std in baseline_results[f'{stat}_stds']]
+        plt.errorbar(fracs, baseline_means, yerr=baseline_cis, fmt=f'ro{line_styles[i]}', ecolor='red', elinewidth=0.8, capsize=1, label=f'fully supervised')
 
     for method_name, v in ss_methods.items():
-        results = get_results_func(v['algorithm'], data_source, classifier, encoder=v['encoder'], similarity_measure=v['similarity'])
-        means = [baseline_means[0]] + results[f'{to_plot}_means']
-        cis = [baseline_cis[0]] + [confidence_interval(0.95, std, 10) for std in results[f'{to_plot}_stds']]
-        plt.errorbar(fracs, means, yerr=cis, fmt=v['colour'], ecolor=v['ecolour'], elinewidth=0.8, capsize=1, label=f'{method_name}')
+        method_color = v['colour']
+        if v['algorithm'] is 'self_feed':
+            results = get_results_func('self_feed', data_source, classifier)
+        else:
+            results = get_results_func(v['algorithm'], data_source, classifier, encoder=v['encoder'], similarity_measure=v['similarity'])
+        for i, stat in enumerate(to_plot):
+            means = [baseline_results[f'{stat}_means'][0]] + results[f'{stat}_means']
+            cis = [baseline_results[f'{stat}_stds'][0]] + [confidence_interval(0.95, std, results['n']) for std in results[f'{stat}_stds']]
+            plt.errorbar(fracs, means, yerr=cis, fmt=f'{method_color}o{line_styles[i]}', ecolor=method_color, elinewidth=0.8, capsize=1, label=f'{method_name}')
 
-    plot_name = ' '.join(to_plot.split('_'))
-    plt.title(f'{plot_name} on different fractions of labeled data.') # include data_source + classifier info in title ultimately.
+    plot_name = 'F1'
+    # plt.title(f'{plot_name} on different fractions of labeled data.') # include data_source + classifier info in title ultimately.
+    plt.title(f'Chatbot: STS-both')
     plt.ylabel(plot_name)
     plt.xticks([0.1*i for i in range(0,11)])
     plt.xlabel('fraction of labeled data')
@@ -48,7 +57,7 @@ def plot_statistics(ps, data_source, classifier, get_results_func, statistics=['
     fracs = results['fracs']
     for s, color in statistics:
         means = results[f'{s}_means']
-        cis = [confidence_interval(0.95, std, 10) for std in results[f'{s}_stds']]
+        cis = [confidence_interval(0.95, std, results['n']) for std in results[f'{s}_stds']]
         plt.errorbar(fracs, means, yerr=cis, fmt=f'{color}o-', ecolor=color, elinewidth=0.8, capsize=1, label=f'{s}')
     
     plt.title(f'classification statistics on different fractions of labeled data.') # include data_source + classifier info in title ultimately.
