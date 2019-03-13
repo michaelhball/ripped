@@ -7,6 +7,7 @@ from torchtext.data.example import Example
 from modules.data_iterators import get_ic_data_iterators
 from modules.models import create_encoder
 from modules.model_wrappers import IntentWrapper
+from modules.train import do_basic_train_and_classify, self_feed
 from modules.utilities import repeat_trainer, traina
 
 from modules.utilities.imports import *
@@ -15,56 +16,17 @@ from modules.utilities.imports_torch import *
 from .lp import LabelProp
 from .knn import knn_classify
 
-__all__ = ['repeat_augment_and_train', 'self_feed']
+__all__ = ['repeat_augment_and_train']
 
 
-def self_feed(dir_to_save, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params):
-    """
-    Implements a self-training algorithm.
-    Args:
-        dir_to_save (str): directory to save models created/loaded during this process
-        labeled_examples (list(Example)): 
-        unlabeled_examples (list(Example)): 
-        text_field (Field): torchtext field for sentences
-        label_field (LabelField): torchtext LabelField for class labels
-        classifier_params (dict): all params needed to instantiate an intent classifier
-    Returns:
-        augmented labeled examples, accuracy of augmentation, fraction of unlabeled data used in augmentation
-    """
-    initial_labeled_num = len(labeled_examples)
-    initial_unlabeled_num = len(unlabeled_examples)
-    num_correct, num_added = 0, 0
-    
-    while True:
-        new_train_ds = data.Dataset(labeled_examples, {'x': text_field, 'y': label_field})
-        wrapper = train_ic(dir_to_save, text_field, label_field, (new_train_ds, val_ds, test_ds), classifier_params, return_statistics=False)
-        confidences, preds = wrapper.classify_all(unlabeled_examples)
-
-        new_unlabeled_examples = []
-        for i, (conf, pred) in enumerate(zip(confidences, preds)):
-            if conf > 0.99:
-                labeled_examples.append(Example.fromdict({'x': unlabeled_examples[i].x, 'y': pred}, {'x': ('x', text_field), 'y': ('y', label_field)}))
-                num_added += 1
-                if pred == unlabeled_examples[i].y:
-                    num_correct += 1
-            else:
-                new_unlabeled_examples.append(unlabeled_examples[i])
-        
-        if len(unlabeled_examples) - len(new_unlabeled_examples) == 0:
-            break
-        unlabeled_examples = new_unlabeled_examples
-        np.random.shuffle(labeled_examples)
-
-    return labeled_examples, float(num_correct/num_added), float(num_added/initial_unlabeled_num)
-
-
-def repeat_augment_and_train(dir_to_save, data_source, aug_algo, encoder_model, datasets, text_field, label_field, frac, classifier_params, k=5):
+def repeat_augment_and_train(dir_to_save, data_source, aug_algo, encoder_model, sim_measure, datasets, text_field, label_field, frac, num_classes, classifier_params, k=10):
     """
     Runs k trials of augmentation & repeat-classification for a given fraction of labeled training data.
     Args:
         dir_to_save (str): directory to save models created/loaded during this process
         aug_algo (str): which augmentation algorithm to use
         encoder_model (str): encoder model to use for augmentation (w similarity measure between these encodings)
+        sim_measure (str): which similarity measure to use
         datasets (list(Dataset)): train/val/test torchtext datasets
         text_field (Field): torchtext field for sentences
         label_field (LabelField): torchtext LabelField for class labels
@@ -72,37 +34,68 @@ def repeat_augment_and_train(dir_to_save, data_source, aug_algo, encoder_model, 
         classifier_params (dict): params for intent classifier to use on augmented data.
         k (int): Number of times to repeat augmentation-classifier training process
     Returns:
-        8 statistical measures of the results of these trialss
+        8 statistical measures of the results of these trials
     """
+    if data_source in ('chatbot', 'webapps', 'askubuntu'):
+        k = 40
+
+    ###########################################################################################################################################################
+    ###########################################################################################################################################################
+    # k = 5 # TO TRY STS^-1 distance measure
+    ###########################################################################################################################################################
+    ###########################################################################################################################################################
+
     train_ds, val_ds, test_ds = datasets
-    aug_accs, aug_fracs = [], []
-    class_accs = []
+    class_accs, aug_accs, aug_fracs = [], [], []
     ps, rs, fs = [], [], []
-    for i in tqdm(range(k),total=k):
+
+    for i in tqdm(range(k), total=k):
         examples = train_ds.examples
         np.random.shuffle(examples)
         cutoff = int(frac*len(examples))
-        labeled_examples = examples[:cutoff]
-        unlabeled_examples = examples[cutoff:]
 
-        if aug_algo == "self_feed" and frac < 1:
-            augmented_train_examples, aug_acc, frac_used = self_feed(dir_to_save, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params)
-            aug_accs.append(aug_acc); aug_fracs.append(frac_used)
-        elif aug_algo != "none" and frac < 1:
-            augmented_train_examples, aug_acc, frac_used = augment(data_source, aug_algo, encoder_model, labeled_examples, unlabeled_examples, train_ds, text_field, label_field)
-            aug_accs.append(aug_acc); aug_fracs.append(frac_used)
+        if data_source in ('askubuntu', 'webapps'):
+            if frac == 0: # SPECIAL CASE TO TEST 1 from every class
+                classes_seen = {i: 0 for i in range(num_classes)}
+                labeled_examples, unlabeled_examples = [], []
+                for eg in examples:
+                    if classes_seen[eg.y] == 0:
+                        labeled_examples.append(eg)
+                        classes_seen[eg.y] += 1
+                    else:
+                        unlabeled_examples.append(eg)
+            else: # ensure at least one labeled example from each class
+                while True:
+                    labeled_examples = examples[:cutoff]
+                    unlabeled_examples = examples[cutoff:]
+                    if len(set([eg.y for eg in labeled_examples])) == num_classes:
+                        break
+                    np.random.shuffle(examples)
         else:
-            augmented_train_examples = labeled_examples
-            aug_accs.append(1); aug_fracs.append(0)
+            labeled_examples = examples[:cutoff]
+            unlabeled_examples = examples[cutoff:]
 
+        if aug_algo == "none" or frac == 1:
+            augmented_train_examples = labeled_examples
+            aug_acc = 1; frac_used = 0
+        elif aug_algo == "self_feed":
+            augmented_train_examples, aug_acc, frac_used = self_feed(data_source, dir_to_save, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params)
+        else:
+            augmented_train_examples, aug_acc, frac_used = augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, text_field, label_field, num_classes)
+        
+        aug_accs.append(aug_acc); aug_fracs.append(frac_used)
         new_train_ds = data.Dataset(augmented_train_examples, {'x': text_field, 'y': label_field})
         new_datasets = (new_train_ds, val_ds, test_ds)
-        acc, p, r, f = train_ic(dir_to_save, text_field, label_field, new_datasets, classifier_params, return_statistics=True)
+
+        if data_source in ('chatbot', 'webapps', 'askubuntu'):
+            acc, p, r, f = do_basic_train_and_classify(new_train_ds, test_ds, classifier_params)
+        else:
+            acc, p, r, f = train_ic(dir_to_save, text_field, label_field, new_datasets, classifier_params, return_statistics=True)
         class_accs.append(acc); ps.append(p); rs.append(r); fs.append(f)
 
-    print(f"FRAC '{frac}' RESULTS BELOW:")
+    print(f"FRAC '{frac}' Results Below:")
     print(f'classification acc --> mean: {np.mean(class_accs)}, std: {np.std(class_accs)}')
-    print(f'augmentation acc --> mean: {np.mean(aug_accs)}, std: {np.std(aug_accs)}\t (average frac used: {np.mean(aug_fracs)})')
+    print(f'augmentation acc --> mean: {np.mean(aug_accs)}; std: {np.std(aug_accs)}\t (average frac used: {np.mean(aug_fracs)})')
     print(f'p/r/f1 --> precision mean: {np.mean(ps)}; recall mean: {np.mean(rs)}; f1 mean: {np.mean(fs)}')
     print(f'p/r/f1 --> precision std: {np.std(ps)}; recall std: {np.std(rs)}; f1 std: {np.std(fs)}')
 
@@ -114,59 +107,60 @@ def repeat_augment_and_train(dir_to_save, data_source, aug_algo, encoder_model, 
     return class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, aug_frac_mean, p_mean, p_std, r_mean, r_std, f_mean, f_std
 
 
-def augment(data_source, aug_algo, encoder_model, labeled_examples, unlabeled_examples, train_ds, text_field, label_field, normalise_encodings=True):
+def augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, text_field, label_field, num_classes):
     if encoder_model.startswith('pretrained'):
         embedding_type = encoder_model.split('_')[1]
         res = encode_data_with_pretrained(data_source, train_ds, text_field, embedding_type, labeled_examples, unlabeled_examples)
     elif encoder_model.startswith('sts'):
-        pass
+        res = encode_data_with_pretrained(data_source, train_ds, text_field, encoder_model, labeled_examples, unlabeled_examples)
     xs_l, ys_l, xs_u, ys_u, xs_u_unencoded = res
 
-    if normalise_encodings:
+    if sim_measure != "sts":
         xs_l = np.array([x / np.linalg.norm(x) for x in xs_l])
         xs_u = np.array([x / np.linalg.norm(x) for x in xs_u])
     
     if aug_algo.startswith("knn"):
         algo_version = aug_algo.split('_')[1]
         if algo_version == 'base':
-            classifications, indices = knn_classify(1, xs_l, ys_l, xs_u, weights='uniform', distance_metric='euclidean')
+            classifications, indices = knn_classify(xs_l, ys_l, xs_u, n=1, weights='uniform')
             frac_used = 1
         elif algo_version == 'threshold':
-            classifications, indices = knn_classify(5, xs_l, ys_l, xs_u, weights='uniform', distance_metric='euclidean', threshold=0.99)
+            classifications, indices = knn_classify(xs_l, ys_l, xs_u, n=2, threshold=0.99)
             ys_u = ys_u[indices]
             xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
             frac_used = float(len(xs_u_unencoded)/len(xs_u))
-        elif algo_version == "recursive":
-            pass
     elif aug_algo.startswith("lp"):
         algo_version = aug_algo.split('_')[1]
+        lp = LabelProp(xs_l, ys_l, xs_u, num_classes, sim_measure=sim_measure, source=encoder_model.split('_')[1])
         if algo_version == 'base':
-            pass
+            lp.propagate()
+            classifications, indices = lp.classify(threshold=False)
+            ys_u = ys_u[indices]
+            xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
+            frac_used = float(len(xs_u_unencoded)/len(xs_u))
         elif algo_version == "threshold":
-            lp = LabelProp(xs_l, ys_l, xs_u, 21) # hardcoded number of classes
             lp.propagate()
             classifications, indices = lp.classify(threshold=True)
             ys_u = ys_u[indices]
             xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
             frac_used = float(len(xs_u_unencoded)/len(xs_u))
         elif algo_version == "recursive":
-            lp = LabelProp(xs_l, ys_l, xs_u, 21) # hardcoded number of classes
             classifications, indices = lp.recursive(xs_l, ys_l, xs_u, ys_u)
             ys_u = ys_u[indices]
             xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
             frac_used = float(len(xs_u_unencoded)/len(xs_u))
         elif algo_version == "p1nn":
-            lp = LabelProp(xs_l, ys_l, xs_u, 21)
             classifications, indices = lp.p1nn(xs_l, ys_l, xs_u)
             frac_used = 1
     
     num_correct = np.sum(classifications == ys_u)
+    aug_acc = 0 if len(classifications) == 0 else float(num_correct/len(classifications))
         
     new_labeled_data = [{'x': x, 'y': classifications[i]} for i, x in enumerate(xs_u_unencoded)]
     example_fields = {'x': ('x', text_field), 'y': ('y', label_field)}
     new_examples = [Example.fromdict(x, example_fields) for x in new_labeled_data]
 
-    return labeled_examples + new_examples, float(num_correct/len(classifications)), frac_used
+    return labeled_examples + new_examples, aug_acc, frac_used
 
 
 def encode_data_with_pretrained(data_source, train_ds, text_field, embedding_type, examples_l, examples_u):
@@ -198,6 +192,26 @@ def create_pretrained_embeddings(train_ds, text_field, data_source, embedding_ty
             sent = ' '.join(eg.x)
             emb = encoder(idxed.reshape(-1, 1)).detach().squeeze(0).numpy()
             embeddings[sent] = emb
+    
+    elif embedding_type.startswith("sts"):
+        source = embedding_type.split('_')[1]
+        enc_params = pickle.load(Path(f'./data/sts/{source}/pretrained/params.pkl').open('rb'))['encoder']
+        emb_dim, hid_dim = enc_params['emb_dim'], enc_params['hid_dim']
+        num_layers, output_type = enc_params['num_layers'], enc_params['output_type']
+        bidir, fine_tune = enc_params['bidir'], enc_params['fine_tune']
+        vocab = pickle.load(Path(f'./data/sts/{source}/pretrained/vocab.pkl').open('rb'))
+        bidir = True # this is set incorrectly in stsbenchmark params
+        encoder = create_encoder(vocab, emb_dim, "lstm", *[hid_dim, num_layers, bidir, fine_tune, output_type])
+        encoder.load_state_dict(torch.load(f'./data/sts/{source}/pretrained/encoder.pt', map_location=lambda storage, loc: storage))
+        encoder.eval()
+        
+        sents = [torch.tensor([[vocab.stoi[t] for t in eg.x]]).reshape(-1,1) for eg in train_ds.examples]
+        embeddings = {}
+        for eg, idxed in zip(train_ds.examples, sents):
+            sent = ' '.join(eg.x)
+            emb = encoder(idxed).detach().squeeze(0).numpy()
+            embeddings[sent] = emb
+
     elif embedding_type == "infersent":
         from pretrained_models.infersent.models import InferSent
         params_model = {'bsize': 64, 'word_emb_dim': 300, 'enc_lstm_dim': 2048,
@@ -209,7 +223,8 @@ def create_pretrained_embeddings(train_ds, text_field, data_source, embedding_ty
         model.build_vocab(sentences, tokenize=False)
         emb = model.encode(sentences, bsize=128, tokenize=False, verbose=False)
         embeddings = {s:e for s,e in zip(sentences, emb)}
-    else:
+    
+    elif embedding_type == "bert" or embedding_type == "elmo":
         encoder = {"bert": BertEmbeddings(), "elmo": ELMoEmbeddings()}[embedding_type]
         sents = [Sentence(' '.join(eg.x)) for eg in train_ds.examples]
         encoder.embed(sents)
@@ -223,7 +238,7 @@ def train_ic(dir_to_save, text_field, label_field, datasets, classifier_params, 
     """
     To simplify training (connection to generic training utility with appropriate parameters).
     # ULTIMATELY, classifier_params should just be able to be passed to this train method along with other
-    # stuff and THAT method is what sorts it all out... but this is fine for now.s
+    # stuff and THAT method is what sorts it all out... but this is fine for now.
     """
     ps = classifier_params
     wrapper = traina(ps['model_name'], ps['encoder_model'], get_ic_data_iterators, IntentWrapper, dir_to_save,
