@@ -1,6 +1,9 @@
 import math
+import matplotlib.pyplot as plt
 import numpy as np
 import warnings
+
+from scipy.stats import entropy
 
 from modules.models import create_sts_predictor
 from modules.utilities import euclid
@@ -46,9 +49,9 @@ MODEL = None
 
 
 class LabelProp():
-    def __init__(self, x_l, y_l, x_u, nc, sim_measure='cosine', source=None):
+    def __init__(self, x_l, y_l, x_u, nc, sigma=None, sim_measure='cosine', source=None):
         """
-        Class for implementation of original label propagation algorithm.
+        Class for implementation of label propagation algorithm.
         """
         if sim_measure == "sts":
             global MODEL
@@ -56,44 +59,89 @@ class LabelProp():
                 MODEL = get_sts_model(source)
         self.sim_measure = sim_measure
 
-        self.nl, self.nu, self.n = len(x_l), len(x_u), len(x_l)+len(x_u)
-        self.nc = nc
-        self.T = np.zeros((self.n,self.n), dtype=np.float)
-        self.Y = np.zeros((self.n,self.nc), dtype=np.float)
+        self.nl, self.nu, self.n, self.nc = len(x_l), len(x_u), len(x_l)+len(x_u), nc
+        self.sigma = sigma if sigma is not None else self._mst_heuristic_sigma(x_l,y_l)
 
-        # initialise T
-        self.ss = math.pow(self._calculate_sigma(x_l,y_l), 2)
-        # print(self.ss)
-        # self.ss = 0.007
-        self.ss /= 3
-        for i, u in enumerate(x_l):
-            for j, v in enumerate(x_l):
-                self.T[i,j] = self._lp_dist(u, v)
-            for k, z in enumerate(x_u):
-                dist = self._lp_dist(u, z)
-                self.T[i,self.nl+k] = dist
-                self.T[self.nl+k,i] = dist
-        for i, u in enumerate(x_u):
-            for j, v in enumerate(x_u):
-                self.T[self.nl+i,self.nl+j] = self._lp_dist(u, v)
+        # # print(self.sigma)
+        # self.sigma = 0.14
+        self._initialise(x_l, y_l, x_u, self.sigma)
 
-        self.T /= self.T.sum(axis=0)[np.newaxis,:] # column norm
-        self.T /= self.T.sum(axis=1)[:,np.newaxis] # row norm
+    def _initialise(self, x_l, y_l, x_u, sigma, epsilon=0):
+        """
+        Initialises transition and label matrices.
+        Args:
+            x_l, y_l (list): encoded sentences and corresponding labels
+            x_u (list): encoded sentences from unlabeled data
+            sigma (float): Sigma parameter to use in weighting
+        Returns:
+            None (creates class variables)
+        """
+        self.ss = math.pow(sigma, 2) # used in weighting function
 
         # initialise Y
-        self.Y = np.zeros((self.n,self.nc), dtype=np.float)
+        self.Y = np.zeros((self.n, self.nc), dtype=np.float)
         for i, _ in enumerate(x_l):
             for j in range(self.nc):
                 self.Y[i,j] = 1 if j == y_l[i] else 0
         self.Y_static = self.Y[:self.nl]
-    
+
+        # initialise T
+        self.T = np.zeros((self.n, self.n), dtype=np.float)
+        for i, u in enumerate(x_l):
+            for j, v in enumerate(x_l):
+                self.T[i,j] = self._weight(u, v)
+            for k, z in enumerate(x_u):
+                dist = self._weight(u, z)
+                self.T[i,self.nl+k] = dist
+                self.T[self.nl+k,i] = dist
+        for i, u in enumerate(x_u):
+            for j, v in enumerate(x_u):
+                self.T[self.nl+i,self.nl+j] = self._weight(u, v)
+        self.T /= self.T.sum(axis=0)[np.newaxis,:] # column norm
+        self.T /= self.T.sum(axis=1)[:,np.newaxis] # row norm
+        
+        # print(list(reversed(sorted(list(self.T[54])))))
+
+        # epsilon-interpolation smoothing w uniform transition matrix
+        U = float(1/self.n) * np.ones((self.n, self.n), dtype=np.float)
+        self.T = epsilon * U + (1 - epsilon) * self.T
+
+    def _weight(self, u, v):
+        """
+        Calculates weight between two nodes in the graph.
+        Args:
+            u,v (list(float)): two encoded points
+        Returns:
+            Weight of edge connecting these points.
+        """
+        return np.exp(-(self._dist_func(u,v)/self.ss))
+
     def _dist_func(self, u, v):
+        """
+        The distance function, either based on the inverse of cosine
+            or sts similarity.
+        Args:
+            u,v = list(float): encoded sentences
+        Returns:
+            Distance between input points.
+        """
         if self.sim_measure == "cosine":
             return euclid(u, v)
         elif self.sim_measure == 'sts':
             return sts_dist(MODEL, u, v)
 
-    def _calculate_sigma(self, x_l, y_l):
+    def _mst_heuristic_sigma(self, x_l, y_l):
+        """
+        Calculates sigma according to MST for the graph
+            defined by label data. Output is the minimum
+            distance between two points in different classes
+            divided by 3 (using 3sigma rule of normal distribution).
+        Args:
+            x_l (list): encoded sentences from labeled data
+            y_l (list(float)): corresponding labels
+        Returns:
+            The sigma value calculated according to this heuristic.
+        """
         D = np.zeros((self.nl,self.nl), dtype=np.float)
         for i, u in enumerate(x_l):
             for j, v in enumerate(x_l):
@@ -107,19 +155,68 @@ class LabelProp():
             
         return min_dist / 3
     
-    def _lp_dist(self, u, v):
-        return np.exp(-(self._dist_func(u,v)/self.ss))
-    
+    def sigma_fit(self, x_l, y_l, x_u, y_u):
+        """
+        Function to find optimal sigma for given data
+            using entropy of probabilistic output classifications.
+        Args:
+            x_l (list): encoded sentences from labeled data
+            y_l (list): corresponding labels for x_l
+            x_u (list): encoded sentences from unlabeled data
+        Returns:
+            Optimal sigma value for use with given input data (according to lowest entropy heuristic).
+        """
+        # self.sigma *= 3 # i.e. setting it to the minimum distance between classes.
+        print(f"MST-det sigma: {self.sigma}")
+        epsilons = [1e-100, 1e-150]
+        colors = ['b', 'g']
+        for epsilon, color in zip(epsilons, colors):
+            sigmas, entropies = [], []
+            min_sigma, max_sigma = 0.001, self.sigma+0.1
+            raynge = np.arange(min_sigma, max_sigma, 0.001)
+            for sigma in tqdm(raynge, total=len(raynge)):
+                self._initialise(x_l, y_l, x_u, sigma=sigma, epsilon=epsilon) # creates T & Y matrices
+                self.propagate() # perform propagation
+                Y_u = self.Y[self.nl:] # get unlabeled class probs
+                H = np.sum([entropy(row) for row in Y_u]) # calc entropy
+                sigmas.append(sigma); entropies.append(H)
+            
+            print(f'epsilon={epsilon}, minimum entropy sigma: {sigmas[np.argmin(entropies)]}')
+
+            self._initialise(x_l, y_l, x_u, sigma=sigmas[np.argmin(entropies)], epsilon=0)
+            self.propagate()
+            preds, _ = self.classify(threshold=False)
+            print(f'aug accuracy: {np.sum(preds == y_u) / len(preds)}\n')
+
+            plt.plot(sigmas, entropies, color, label=f'epsilon={epsilon}')
+        
+        plt.title("sigma v entropy")
+        plt.xlabel('sigma'); plt.ylabel('entropy')
+        plt.grid(b=True)
+        plt.legend()
+        plt.show()
+
+        assert(False)
+
     def propagate(self, tol=0.0001, max_iter=10000):
-        Y_prev = np.zeros((self.n,self.nc),dtype=np.float)
+        """
+        Performs label propagation until convergence
+            (absolute difference in label matrix).
+        Args:
+            tol (float): tolerance defining convergence point
+            max_iter (int): maximum number of iterations before break
+        Returns:
+            None (updates label matrix).
+        """
+        Y_prev = np.zeros((self.n, self.nc), dtype=np.float)
         for i in range(max_iter):
             if np.abs(self.Y-Y_prev).sum() < tol: break
             Y_prev = self.Y
             self.Y = np.matmul(self.T, self.Y) # Y <- TY
-            # self.Y[self.nl:] /= self.Y[self.nl:].sum(axis=1)[:, np.newaxis] # row normalise Y_u
             self.Y[:self.nl] = self.Y_static # clamp labels
         else:
             warnings.warn(f'max_iter ({max_iter}) was reached without convergence')
+        self.Y[self.nl:] /= self.Y[self.nl:].sum(axis=1)[:, np.newaxis] # normalise predictions
     
     def recursive(self, x_l, y_l, x_u, y_u, tol=0.0001, max_iter=10000):
         x_indices = {str(x):i for i, x in enumerate(x_u)} # indices in orignial unlabeled set.
@@ -130,7 +227,7 @@ class LabelProp():
         iters = 0
         while True:
             iters += 1
-            self.__init__(xl, yl, xu, 21)
+            self.__init__(xl, yl, xu, 21) # THIS NEEDS TO BE FIXED (UGH)
             self.propagate(tol, max_iter)
             classifications, indices = self.classify(threshold=True)
 
@@ -198,10 +295,17 @@ class LabelProp():
         return np.sum(preds == y_u) / len(preds)
     
     def classify(self, threshold=True):
-        self.Y[self.nl:] /= self.Y[self.nl:].sum(axis=1)[:, np.newaxis] # normalise predictions
+        """
+        Extracts classifications from label matrix.
+        Args:
+            threshold (bool): indicating whether to use threshold variant.
+        Returns:
+            Predicted classes, and indices of the data labeled with those
+                classes (if we use threshold, not all unlabeled data are used).
+        """
         indices, preds = [], []
         for i, row in enumerate(self.Y[self.nl:]):
-            THRESH = 0.9 if threshold else 0
+            THRESH = 0.92 if threshold else 0
             # print(np.max(row))
             if np.max(row) >= THRESH:
                 indices.append(i)
