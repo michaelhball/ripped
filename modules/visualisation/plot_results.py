@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 
-from .math import confidence_interval
+from modules.utilities.math import confidence_interval
 
 __all__ = ['plot_against_supervised', 'plot_statistics']
 
@@ -37,7 +37,7 @@ def plot_against_supervised(ss_methods, data_source, classifier, get_results_fun
             results = get_results_func(v['algorithm'], data_source, classifier, encoder=v['encoder'], similarity_measure=v['similarity'])
         for i, stat in enumerate(to_plot):
             means = [baseline_results[f'{stat}_means'][0]] + results[f'{stat}_means']
-            cis = [baseline_results[f'{stat}_stds'][0]] + [confidence_interval(0.95, std, results['n']) for std in results[f'{stat}_stds']]
+            cis = [baseline_cis[0]] + [confidence_interval(0.95, std, results['n']) for std in results[f'{stat}_stds']]
             plt.errorbar(fracs, means, yerr=cis, fmt=f'{method_color}o{line_styles[i]}', ecolor=method_color, elinewidth=0.8, capsize=1, label=f'{method_name}')
 
     plt.title(title)
