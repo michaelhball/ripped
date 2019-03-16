@@ -1,5 +1,6 @@
 from .basic_classifier import BasicClassifier
 from .lstm_encoder import LSTMEncoder
+from .pass_encoder import PassEncoder
 from .pool_encoder import PoolEncoder
 from .sts_predictor import STSPredictor
 
@@ -32,6 +33,8 @@ def create_encoder(vocab, embedding_dim, encoder_model, *args):
         encoder = PoolEncoder
     elif encoder_model == "lstm":
         encoder = LSTMEncoder
+    elif encoder_model == "pass":
+        encoder = PassEncoder
     else:
         print(f'encoder type: "{encoder_model}" not implemented')
     
