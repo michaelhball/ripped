@@ -1,11 +1,12 @@
 import matplotlib.pyplot as plt
-import torch
 
 from sklearn.metrics import precision_recall_fscore_support
 
 from modules.models import create_intent_classifier
-from modules.utilities import EarlyStopping
+from modules.train import EarlyStopping
+
 from modules.utilities.imports import *
+from modules.utilities.imports_torch import *
 
 from .base_wrapper import BaseWrapper
 

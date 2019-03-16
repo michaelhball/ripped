@@ -1,10 +1,10 @@
-import torch
-
 from scipy.stats.stats import pearsonr, spearmanr
 
 from modules.models import create_sts_predictor
-from modules.utilities import EarlyStopping
+from modules.train import EarlyStopping
+
 from modules.utilities.imports import *
+from modules.utilities.imports_torch import *
 
 from .base_wrapper import BaseWrapper
 
@@ -69,7 +69,7 @@ class STSWrapper(BaseWrapper):
         self.model.eval(); self.model.training = False
         total_loss = 0.0
         for batch in iter(self.val_di):
-            X1, X2, Y = batch.x1.to(self.device), batch.x2.to(self.device), batch.y.to(self.device)
+            X1, X2, Y = batch['x1'].to(self.device), batch['x2'].to(self.device), batch['y'].to(self.device)
             preds = self.model(X1, X2)
             total_loss += loss_func(preds.reshape(-1), Y)
         
@@ -82,7 +82,7 @@ class STSWrapper(BaseWrapper):
         self.model.eval(); self.model.training = False
         preds, scores = [], []
         for batch in iter(self.test_di):
-            X1, X2, Y = batch.x1.to(self.device), batch.x2.to(self.device), batch.y.to(self.device)
+            X1, X2, Y = batch['x1'].to(self.device), batch['x2'].to(self.device), batch['y'].to(self.device)
             pred = self.model(X1, X2)
             preds += pred.reshape(-1).tolist()
             scores += Y.float().reshape(-1).tolist()
@@ -110,16 +110,15 @@ class STSWrapper(BaseWrapper):
         start_time = time.time()
         train_losses, val_losses, correlations = [], [], []
         early_stopping = EarlyStopping(patience=4, verbose=False)
-        # self.create_model()
 
         for e in range(num_epochs):
             self.model.train(); self.model.training = True
             total_loss, num_batches = 0.0, 0
-            
+
             for batch in iter(self.train_di):
                 num_batches += 1
                 self.model.zero_grad()
-                X1, X2, Y = batch.x1.to(self.device), batch.x2.to(self.device), batch.y.to(self.device)
+                X1, X2, Y = batch['x1'].to(self.device), batch['x2'].to(self.device), batch['y'].to(self.device)
                 preds = self.model(X1, X2)
                 loss = loss_func(preds.reshape(-1), Y)
                 total_loss += loss.item()
