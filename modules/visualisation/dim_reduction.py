@@ -1,5 +1,6 @@
+from matplotlib import pyplot as plt
+from matplotlib.patches import Ellipse
 from pandas import DataFrame
-from plotnine import *
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
@@ -17,9 +18,7 @@ def visualise_data(data_source, encoder_model, datasets, intents, text_field, ty
         embedding_type = encoder_model
 
     X, Y, *_ = encode_data_with_pretrained(data_source, train_ds, text_field, embedding_type,  train_ds.examples, [])
-    X = np.array([x / np.linalg.norm(x) for x in X]) # not sure if we need normalisation?
-
-    print(len(X[0]))
+    X = np.array([x / np.linalg.norm(x) for x in X])
 
     if type_ == "pca":
         pca = PCA(n_components=3)
@@ -27,20 +26,12 @@ def visualise_data(data_source, encoder_model, datasets, intents, text_field, ty
         pcs1, pcs2, pcs3 = pca_res[:,0], pca_res[:,1], pca_res[:,2]
         print(f'Explained variation per principal component: {pca.explained_variance_ratio_}')
         df_pca = DataFrame([{'principle component 1': pc1, 'principle component 2': pc2, 'intent': intents[y]} for y,pc1,pc2 in zip(Y,pcs1,pcs2)])
-        chart = ggplot(df_pca, aes(x='principle component 1', y='principle component 2', color='factor(intent)')) +\
-                    geom_point(alpha=0.8) +\
-                    scale_color_discrete() +\
-                    ggtitle("First & Second PCs colored by intent")
     
     elif type_ == "tsne":
         tsne = TSNE(n_components=2, verbose=0, perplexity=30, n_iter=1000)
         tsne_res = tsne.fit_transform(X)
         tsnes1, tsnes2 = tsne_res[:,0], tsne_res[:,1]
         df_tsne = DataFrame([{'x-tsne': t1, 'y-tsne': t2, 'intent': intents[y]} for y,t1,t2 in zip(Y,tsnes1,tsnes2)])
-        chart = ggplot(df_tsne, aes(x='x-tsne', y='y-tsne', color='factor(intent)')) +\
-                    geom_point() +\
-                    scale_color_discrete() +\
-                    ggtitle("t-SNE dimensions colored by intent")
  
     elif type_ == "pca+tsne":
         n_components = {'webapps': 30, 'chatbot': 50, 'askubuntu': 50, 'chat': 100}[data_source]
@@ -56,27 +47,37 @@ def visualise_data(data_source, encoder_model, datasets, intents, text_field, ty
             'y-tsne-pca': t2,
             'label': str(idx)
         } for idx, (y,t1,t2) in enumerate(zip(Y,ts1,ts2))])
-        
-        means = df_tsne_pca.groupby(['intent'], as_index=False).mean()
-        print(means)
 
-        chart = ggplot(df_tsne_pca, aes(x='x-tsne-pca', y='y-tsne-pca', color='factor(intent)', shape='factor(intent)')) +\
-                    geom_point(size=8, alpha=0.8) +\
-                    geom_point(data=means, size=20) +\
-                    scale_color_discrete() +\
-                    theme(subplots_adjust={'right': 0.8}) +\
-                    labs(
-                        title=f'PCA + tSNE embeddings. Dataset: {data_source}, embedding method: {embedding_type}',
-                        x = 'x-tsne-pca',
-                        y = 'y-tsne-pca'
-                    )
-                    # geom_label(aes(label='label'), va='bottom') +\
+        # plot and calculate variance/inf(means)
+        with plt.style.context('seaborn-whitegrid'):
+            plt.figure()
+            ax = plt.gca()
+            
+            intent_stats = {}
+            for idx, intent in enumerate(set(df_tsne_pca['intent'].values)):
+                values = [v[1:] for v in df_tsne_pca.loc[df_tsne_pca['intent']==intent].drop(columns=['intent']).values]
+                mean = np.mean(values, axis=0); var = np.var(values, axis=0)
+                intent_stats[intent] = (mean, np.var(values))
+                ax.scatter([v[0] for v in values], [v[1] for v in values], label=intent, color=f'C{idx}')
+                ax.add_patch(Ellipse(mean, np.sqrt(var[0]), np.sqrt(var[1]), fill=False, edgecolor=f'C{idx}')) # std/var depending on sqrt
+            
+            cluster_distances = [] # not really distances... inversely proportional.
+            for _, stats in intent_stats.items():
+                max_dist = 0
+                for _, other_stats in intent_stats.items():
+                    dist = np.linalg.norm(np.abs(stats[0]-other_stats[0]))
+                    if dist > max_dist:
+                        max_dist = dist
+                cluster_distances.append(stats[1] / max_dist)
+            print(f'avg cluster dist: {np.mean(cluster_distances)}, max cluster dist: {np.max(cluster_distances)}')
+            
+            plt.xlabel('tsne-pca-1')
+            plt.ylabel('tsne-pca-2')
+            plt.title(f'PCA + tSNE embeddings. Dataset: {data_source}, embedding method: {embedding_type}')
+            plt.legend()
+            plt.show()
+            assert(False)
 
     else:
         print(f"'{type_}'dimensionality reduction is not supported")
         return
-    
-    if show:
-        print(chart)
-
-    return chart
