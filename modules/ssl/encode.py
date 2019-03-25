@@ -5,7 +5,12 @@ from modules.utilities.imports_torch import *
 __all__ = ['encode_data_with_pretrained']
 
 
-def encode_data_with_pretrained(data_source, train_ds, text_field, embedding_type, examples_l, examples_u):
+def encode_data_with_pretrained(data_source, train_ds, text_field, encoder_model, examples_l, examples_u):
+    if encoder_model.startswith('pretrained'):
+        embedding_type = encoder_model.split('_')[1]
+    else:
+        embedding_type = encoder_model
+
     data_source_embeddings_path = f'./data/ic/{data_source}/{embedding_type}_embeddings.pkl'
     embeddings_file = Path(data_source_embeddings_path)
     
