@@ -1,12 +1,11 @@
-import math
 import matplotlib.pyplot as plt
-import numpy as np
 import warnings
 
 from scipy.stats import entropy
 
 from modules.models import create_sts_predictor
 from modules.utilities import euclid
+
 from modules.utilities.imports import *
 from modules.utilities.imports_torch import *
 
@@ -14,13 +13,11 @@ from modules.utilities.imports_torch import *
 def get_sts_model(source):
     vocab = pickle.load(Path(f'./data/sts/{source}/pretrained/vocab.pkl').open('rb'))
     params = pickle.load(Path(f'./data/sts/{source}/pretrained/params.pkl').open('rb'))
-
     enc_params, pred_params = params['encoder'], params['predictor']
     emb_dim, hid_dim = enc_params['emb_dim'], enc_params['hid_dim']
     num_layers, output_type = enc_params['num_layers'], enc_params['output_type']
     bidir, fine_tune = enc_params['bidir'], enc_params['fine_tune']
     layers, drops = pred_params['layers'], pred_params['drops']
-
     enc_args = [hid_dim, num_layers, bidir, fine_tune, output_type]
     model = create_sts_predictor(vocab, emb_dim, 'lstm', 'mlp', layers, drops, *enc_args)
     model.load_state_dict(torch.load(f'./data/sts/{source}/pretrained/weights.pt', map_location=lambda storage, loc: storage))
@@ -42,7 +39,7 @@ def sts_dist(model, u, v):
     if sim <= 0:
         sim = 0.01
 
-    return 1/(sim/5)
+    return 1 - (sim/5) # distance...
 
 
 MODEL = None
@@ -61,9 +58,6 @@ class LabelProp():
 
         self.nl, self.nu, self.n, self.nc = len(x_l), len(x_u), len(x_l)+len(x_u), nc
         self.sigma = sigma if sigma is not None else self._mst_heuristic_sigma(x_l,y_l)
-
-        # # print(self.sigma)
-        # self.sigma = 0.14
         self._initialise(x_l, y_l, x_u, self.sigma)
 
     def _initialise(self, x_l, y_l, x_u, sigma, epsilon=0):
@@ -99,8 +93,6 @@ class LabelProp():
                 self.T[self.nl+i,self.nl+j] = self._weight(u, v)
         self.T /= self.T.sum(axis=0)[np.newaxis,:] # column norm
         self.T /= self.T.sum(axis=1)[:,np.newaxis] # row norm
-        
-        # print(list(reversed(sorted(list(self.T[54])))))
 
         # epsilon-interpolation smoothing w uniform transition matrix
         U = float(1/self.n) * np.ones((self.n, self.n), dtype=np.float)
@@ -166,7 +158,6 @@ class LabelProp():
         Returns:
             Optimal sigma value for use with given input data (according to lowest entropy heuristic).
         """
-        # self.sigma *= 3 # i.e. setting it to the minimum distance between classes.
         print(f"MST-det sigma: {self.sigma}")
         epsilons = [1e-100, 1e-150]
         colors = ['b', 'g']
@@ -196,8 +187,6 @@ class LabelProp():
         plt.legend()
         plt.show()
 
-        assert(False)
-
     def propagate(self, tol=0.0001, max_iter=10000):
         """
         Performs label propagation until convergence
@@ -219,7 +208,19 @@ class LabelProp():
         self.Y[self.nl:] /= self.Y[self.nl:].sum(axis=1)[:, np.newaxis] # normalise predictions
     
     def recursive(self, x_l, y_l, x_u, y_u, tol=0.0001, max_iter=10000):
-        x_indices = {str(x):i for i, x in enumerate(x_u)} # indices in orignial unlabeled set.
+        """
+        Recursive LP variant (performs propagation, adds labels above
+            a certain threshold, and recurs on new labeled dataset).
+        Args:
+            x_l (list): encoded sentences from labeled data.
+            y_l (list(float)): corresponding labels
+            x_u (list): encoded sentences from unlabeled data.
+            tol (float): convergence condition.
+            max_iter (int): maximum # iters before break.
+        Returns:
+            Classifications & their indices in original unlabeled dataset.
+        """
+        x_indices = {str(x):i for i, x in enumerate(x_u)}
         xl, yl, xu, yu = x_l, y_l, x_u, y_u
         all_classifications, all_indices = [], []
         last_unlabeled_count = len(x_u)
@@ -227,7 +228,7 @@ class LabelProp():
         iters = 0
         while True:
             iters += 1
-            self.__init__(xl, yl, xu, 21) # THIS NEEDS TO BE FIXED (UGH)
+            self.__init__(xl, yl, xu, self.nc)
             self.propagate(tol, max_iter)
             classifications, indices = self.classify(threshold=True)
 
@@ -243,7 +244,6 @@ class LabelProp():
             xu = np.array([x for i,x in enumerate(xu) if i not in indices])
             yu = np.array([y for i,y in enumerate(yu) if i not in indices])
 
-            # break condition
             if last_unlabeled_count - len(xu) == 0:
                 break
             last_unlabeled_count = len(xu)
@@ -251,6 +251,18 @@ class LabelProp():
         return all_classifications, all_indices
     
     def p1nn(self, x_l, y_l, x_u):
+        """
+        Performs propagate-1-nearest-neighbour LP variant.
+            (at each time step, labels the unlabeled example
+            closest to any labeled example - repeats w. new
+            dataset).
+        Args:
+            x_l (list): encoded sentences from labeled data
+            y_l (list(float)): corresponding labels
+            x_u (list): encoded sentences from unlabeled data
+        Returns:
+            classification predictions.
+        """
         classifications = list(-1 * np.ones(self.nu, dtype=np.float))
         x_l_labels = {i:y_l[i] for i, _ in enumerate(x_l)}
         
@@ -287,13 +299,6 @@ class LabelProp():
 
         return classifications, [i for i in range(len(x_u))]
 
-    def accuracy(self, y_u):
-        preds, indices = self.classify(y_u, threshold=True)
-        y_idxed = y_u[indices]
-        print(f'accuracy: {np.sum(preds == y_idxed) / len(preds)} using {len(y_idxed)} unlabeled examples out of {self.nu}')
-        preds = self.classify(y_u)
-        return np.sum(preds == y_u) / len(preds)
-    
     def classify(self, threshold=True):
         """
         Extracts classifications from label matrix.
@@ -305,8 +310,7 @@ class LabelProp():
         """
         indices, preds = [], []
         for i, row in enumerate(self.Y[self.nl:]):
-            THRESH = 0.92 if threshold else 0
-            # print(np.max(row))
+            THRESH = .99 if threshold else 0
             if np.max(row) >= THRESH:
                 indices.append(i)
                 preds.append(np.argmax(row))
