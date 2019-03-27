@@ -13,7 +13,7 @@ def plot_one_statistic(methods, data_source, classifier, get_results, plot_type=
         data_source (str): which dataset we're considering
         classifier (str): type of classifier used
         get_results (func): function to get results from relevant results file
-        plot_type (str): embs|methods (either comparing different embeddings or different SS methods for one embedding type)
+        plot_type (str): embeddings|algos (either comparing different embeddings or different SS methods for one embedding type)
         to_plot (str): statistic we're plotting (class_acc|p|r|f1)
         title (str): chart title
     Returns:
@@ -37,7 +37,6 @@ def plot_one_statistic(methods, data_source, classifier, get_results, plot_type=
 
         plt.title(title)
         plt.ylabel(to_plot)
-        plt.xticks([0.1*i for i in range(len(fracs))])
         plt.xlabel('fraction of labeled data')
         plt.legend()
         plt.grid(b=True)

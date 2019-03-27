@@ -59,9 +59,9 @@ def visualise_data(data_source, encoder_model, datasets, intents, text_field, ty
                 mean = np.mean(values, axis=0); var = np.var(values, axis=0)
                 intent_stats[intent] = (mean, np.var(values))
                 ax.scatter([v[0] for v in values], [v[1] for v in values], label=intent, color=f'C{idx}')
-                ax.add_patch(Ellipse(mean, np.sqrt(var[0]), np.sqrt(var[1]), fill=False, edgecolor=f'C{idx}')) # std/var depending on sqrt
+                ax.add_patch(Ellipse(mean, np.sqrt(var[0]), np.sqrt(var[1]), fill=False, edgecolor=f'C{idx}')) # sqrt here makes variance-->std
             
-            cluster_distances = [] # not really distances... inversely proportional.
+            cluster_distances = [] # not really 'distance'
             for _, stats in intent_stats.items():
                 max_dist = 0
                 for _, other_stats in intent_stats.items():
@@ -71,11 +71,13 @@ def visualise_data(data_source, encoder_model, datasets, intents, text_field, ty
                 cluster_distances.append(stats[1] / max_dist)
             print(f'avg cluster dist: {np.mean(cluster_distances)}, max cluster dist: {np.max(cluster_distances)}')
             
-            plt.xlabel('tsne-pca-1')
-            plt.ylabel('tsne-pca-2')
-            plt.title(f'PCA + tSNE embeddings. Dataset: {data_source}, embedding method: {embedding_type}')
-            plt.legend()
-            plt.show()
+            if show:
+                plt.xlabel('tsne-pca-1')
+                plt.ylabel('tsne-pca-2')
+                plt.title(f'PCA + tSNE embeddings. Dataset: {data_source}, embedding method: {embedding_type}')
+                plt.legend()
+                plt.show()
+
             assert(False)
 
     else:
