@@ -39,17 +39,24 @@ def sts_dist(model, u, v):
     if sim <= 0:
         sim = 0.01
 
-    return 1 - (sim/5) # distance...
+    return 1 - (sim/5)
 
 
 MODEL = None
 
 
 class LabelProp():
+    """
+    Class for implementation of label propagation algorithm.
+    Args:
+        x_l (list(emb)): labeled data in embedded space
+        y_l (list(int)): labels for labeled data
+        x_u (list(emb)): unlabeled data in embedded space
+        sigma (float): parameter controlling edge-weighting
+        sim_measure (str): cosine | sts
+        source (str): source of STS model for sts sim (sick|stsbenchmark|both)
+    """
     def __init__(self, x_l, y_l, x_u, nc, sigma=None, sim_measure='cosine', source=None):
-        """
-        Class for implementation of label propagation algorithm.
-        """
         if sim_measure == "sts":
             global MODEL
             if MODEL is None:

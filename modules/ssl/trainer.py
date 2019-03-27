@@ -9,8 +9,10 @@ from modules.utilities import repeat_trainer, traina
 from modules.utilities.imports import *
 from modules.utilities.imports_torch import *
 
+from .eda import eda_corpus
 from .encode import encode_data_with_pretrained
 from .lp import LabelProp
+from .kmeans import kmeans
 from .knn import knn_classify
 
 __all__ = ['repeat_augment_and_train']
@@ -33,57 +35,51 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
     Returns:
         8 statistical measures of the results of these trials
     """
-    if data_source in ('chatbot', 'webapps', 'askubuntu'):
-        k = 40
-
-    ###########################################################################################################################################################
-    ###########################################################################################################################################################
-    # k = 5 # TO TRY STS^-1 distance measure
-    ###########################################################################################################################################################
-    ###########################################################################################################################################################
-
-    k=200
-
     train_ds, val_ds, test_ds = datasets
     class_accs, aug_accs, aug_fracs = [], [], []
     ps, rs, fs = [], [], []
+
+    if sim_measure == "sts":
+        k = 10 if encoder_model == "sts_sick" else 20
+    elif data_source == "chatbot" and aug_algo.startswith("lp"):
+        k = 40
+    else:
+        k = 200
 
     for i in tqdm(range(k), total=k):
         examples = train_ds.examples
         np.random.shuffle(examples)
         cutoff = int(frac*len(examples))
 
-        if data_source in ('askubuntu', 'webapps'):
-            if frac == 0: # SPECIAL CASE TO TEST 1 from every class
-                classes_seen = {i: 0 for i in range(num_classes)}
-                labeled_examples, unlabeled_examples = [], []
-                for eg in examples:
-                    if classes_seen[eg.y] == 0:
-                        labeled_examples.append(eg)
-                        classes_seen[eg.y] += 1
-                    else:
-                        unlabeled_examples.append(eg)
-            else: # ensure at least one labeled example from each class
-                while True:
-                    labeled_examples = examples[:cutoff]
-                    unlabeled_examples = examples[cutoff:]
-                    if len(set([eg.y for eg in labeled_examples])) == num_classes:
-                        break
-                    np.random.shuffle(examples)
-####################################################################################################################################
-####################################################################################################################################
-        # SHOULD DO THIS FOR CHAT DATASET TOO? WILL PROBABLY LEAD TO STRONGER BASELINE BUT ESPECIALLY STRONGER SSL STUFF????
-####################################################################################################################################
-####################################################################################################################################
-        else:
-            labeled_examples = examples[:cutoff]
-            unlabeled_examples = examples[cutoff:]
+        if frac == 0: # 1 labeled eg from each class
+            classes_seen = {i: 0 for i in range(num_classes)}
+            labeled_examples, unlabeled_examples = [], []
+            for eg in examples:
+                if classes_seen[eg.y] == 0:
+                    labeled_examples.append(eg)
+                    classes_seen[eg.y] += 1
+                else:
+                    unlabeled_examples.append(eg)
+        else: # at least one labeled eg from each class
+            while True:
+                labeled_examples = examples[:cutoff]
+                unlabeled_examples = examples[cutoff:]
+                if len(set([eg.y for eg in labeled_examples])) == num_classes:
+                    break
+                np.random.shuffle(examples)
 
-        if aug_algo == "none" or frac == 1:
+        if aug_algo == "eda":
+            x_l, y_l = [eg.x for eg in labeled_examples], [eg.y for eg in labeled_examples]
+            augmented_x_l, augmented_y_l = eda_corpus(x_l, y_l)
+            new_labeled_data = [{'x': x, 'y': y} for x,y in zip(augmented_x_l, augmented_y_l)]
+            augmented_train_examples = [Example.fromdict(x, {'x': ('x', text_field), 'y': ('y', label_field)}) for x in new_labeled_data]
+            aug_acc = 1; frac_used = 0
+        elif aug_algo == "none" or frac == 1:
             augmented_train_examples = labeled_examples
             aug_acc = 1; frac_used = 0
         elif aug_algo == "self_feed":
-            augmented_train_examples, aug_acc, frac_used = self_feed(data_source, dir_to_save, iter_func, model_wrapper, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params)
+            sf_thresh = 0.995
+            augmented_train_examples, aug_acc, frac_used = self_feed(data_source, dir_to_save, iter_func, model_wrapper, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params, thresh=sf_thresh)
         else:
             augmented_train_examples, aug_acc, frac_used = augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, text_field, label_field, num_classes)
         
@@ -100,8 +96,8 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
     print(f"FRAC '{frac}' Results Below:")
     print(f'classification acc --> mean: {np.mean(class_accs)}, std: {np.std(class_accs)}')
     print(f'augmentation acc --> mean: {np.mean(aug_accs)}; std: {np.std(aug_accs)}\t (average frac used: {np.mean(aug_fracs)})')
-    print(f'p/r/f1 --> precision mean: {np.mean(ps)}; recall mean: {np.mean(rs)}; f1 mean: {np.mean(fs)}')
-    print(f'p/r/f1 --> precision std: {np.std(ps)}; recall std: {np.std(rs)}; f1 std: {np.std(fs)}')
+    print(f'p/r/f1 means --> precision mean: {np.mean(ps)}; recall mean: {np.mean(rs)}; f1 mean: {np.mean(fs)}')
+    print(f'p/r/f1 stds --> precision std: {np.std(ps)}; recall std: {np.std(rs)}; f1 std: {np.std(fs)}')
 
     class_acc_mean, class_acc_std = np.mean(class_accs), np.std(class_accs)
     aug_acc_mean, aug_acc_std, aug_frac_mean = np.mean(aug_accs), np.std(aug_accs), np.mean(aug_fracs)
@@ -112,16 +108,8 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
 
 
 def augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, text_field, label_field, num_classes):
-    if encoder_model.startswith('pretrained'):
-        embedding_type = encoder_model.split('_')[1]
-        res = encode_data_with_pretrained(data_source, train_ds, text_field, embedding_type, labeled_examples, unlabeled_examples)
-    elif encoder_model.startswith('sts'):
-        res = encode_data_with_pretrained(data_source, train_ds, text_field, encoder_model, labeled_examples, unlabeled_examples)
+    res = encode_data_with_pretrained(data_source, train_ds, text_field, encoder_model, labeled_examples, unlabeled_examples)
     xs_l, ys_l, xs_u, ys_u, xs_u_unencoded = res
-
-    if sim_measure != "sts":
-        xs_l = np.array([x / np.linalg.norm(x) for x in xs_l])
-        xs_u = np.array([x / np.linalg.norm(x) for x in xs_u])
 
     if aug_algo.startswith("knn"):
         algo_version = aug_algo.split('_')[1]
@@ -133,10 +121,14 @@ def augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples,
             ys_u = ys_u[indices]
             xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
             frac_used = float(len(xs_u_unencoded)/len(xs_u))
+    elif aug_algo == "kmeans":
+        classifications = kmeans(xs_l, xs_u, ys_l, n_clusters=num_classes)
+        frac_used = 1
     elif aug_algo.startswith("lp"):
         algo_version = aug_algo.split('_')[1]
         lp = LabelProp(xs_l, ys_l, xs_u, num_classes, sim_measure=sim_measure, source=encoder_model.split('_')[1])
 
+        # TO FIND SIGMA VALUES... THE EPSILON STUFF STILL ISN'T REALLY WORKING FOR ME.
         # lp.sigma_fit(xs_l, ys_l, xs_u, ys_u)
         # assert(False)
 
