@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import warnings
 
+from scipy import spatial
 from scipy.stats import entropy
 
 from modules.models import create_sts_predictor
@@ -34,11 +35,9 @@ def sts_dist(model, u, v):
     for l in model.layers:
         l_x = l(x)
         x = F.relu(l_x)
-
     sim = l_x.item()
     if sim <= 0:
         sim = 0.01
-
     return 1 - (sim/5)
 
 
@@ -64,7 +63,9 @@ class LabelProp():
         self.sim_measure = sim_measure
 
         self.nl, self.nu, self.n, self.nc = len(x_l), len(x_u), len(x_l)+len(x_u), nc
-        self.sigma = sigma if sigma is not None else self._mst_heuristic_sigma(x_l,y_l)
+        # self.sigma = sigma if sigma is not None else self._mst_heuristic_sigma(x_l,y_l)
+        # print(self.sigma)
+        self.sigma = 0.09
         self._initialise(x_l, y_l, x_u, self.sigma)
 
     def _initialise(self, x_l, y_l, x_u, sigma, epsilon=0):
@@ -86,48 +87,18 @@ class LabelProp():
                 self.Y[i,j] = 1 if j == y_l[i] else 0
         self.Y_static = self.Y[:self.nl]
 
-        # initialise T
-        self.T = np.zeros((self.n, self.n), dtype=np.float)
-        for i, u in enumerate(x_l):
-            for j, v in enumerate(x_l):
-                self.T[i,j] = self._weight(u, v)
-            for k, z in enumerate(x_u):
-                dist = self._weight(u, z)
-                self.T[i,self.nl+k] = dist
-                self.T[self.nl+k,i] = dist
-        for i, u in enumerate(x_u):
-            for j, v in enumerate(x_u):
-                self.T[self.nl+i,self.nl+j] = self._weight(u, v)
+        # initialise T (better)
+        st = time.time()
+        X = np.concatenate([x_l,x_u], axis=0)
+        self.T = spatial.distance.cdist(X,X) # euclid_distance matrix
+        self.T = np.exp(-self.T/self.ss) # weighting function
         self.T /= self.T.sum(axis=0)[np.newaxis,:] # column norm
         self.T /= self.T.sum(axis=1)[:,np.newaxis] # row norm
+        print(f'initialised T in {time.time()-st} seconds')
 
-        # epsilon-interpolation smoothing w uniform transition matrix
-        U = float(1/self.n) * np.ones((self.n, self.n), dtype=np.float)
-        self.T = epsilon * U + (1 - epsilon) * self.T
-
-    def _weight(self, u, v):
-        """
-        Calculates weight between two nodes in the graph.
-        Args:
-            u,v (list(float)): two encoded points
-        Returns:
-            Weight of edge connecting these points.
-        """
-        return np.exp(-(self._dist_func(u,v)/self.ss))
-
-    def _dist_func(self, u, v):
-        """
-        The distance function, either based on the inverse of cosine
-            or sts similarity.
-        Args:
-            u,v = list(float): encoded sentences
-        Returns:
-            Distance between input points.
-        """
-        if self.sim_measure == "cosine":
-            return euclid(u, v)
-        elif self.sim_measure == 'sts':
-            return sts_dist(MODEL, u, v)
+        # # epsilon-interpolation smoothing w uniform transition matrix
+        # U = float(1/self.n) * np.ones((self.n, self.n), dtype=np.float)
+        # self.T = epsilon * U + (1 - epsilon) * self.T
 
     def _mst_heuristic_sigma(self, x_l, y_l):
         """
@@ -141,15 +112,11 @@ class LabelProp():
         Returns:
             The sigma value calculated according to this heuristic.
         """
-        D = np.zeros((self.nl,self.nl), dtype=np.float)
-        for i, u in enumerate(x_l):
-            for j, v in enumerate(x_l):
-                D[i,j] = self._dist_func(u, v)
-        
+        D = spatial.distance.cdist(x_l, x_l)
         min_dist = float('inf')
         for i in range(self.nl):
             for j, dist in enumerate(D[i]):
-                if y_l[i] != y_l[j] and dist != 0 and dist < min_dist:
+                if y_l[i] != y_l[j] and dist > 0 and dist < min_dist:
                     min_dist = dist
             
         return min_dist / 3
@@ -204,8 +171,9 @@ class LabelProp():
         Returns:
             None (updates label matrix).
         """
+        tol = 0.1 # for TREC
         Y_prev = np.zeros((self.n, self.nc), dtype=np.float)
-        for i in range(max_iter):
+        for i in tqdm(range(max_iter), total=max_iter):
             if np.abs(self.Y-Y_prev).sum() < tol: break
             Y_prev = self.Y
             self.Y = np.matmul(self.T, self.Y) # Y <- TY
@@ -251,7 +219,7 @@ class LabelProp():
             xu = np.array([x for i,x in enumerate(xu) if i not in indices])
             yu = np.array([y for i,y in enumerate(yu) if i not in indices])
 
-            if last_unlabeled_count - len(xu) == 0:
+            if last_unlabeled_count - len(xu) == 0 or len(xu) == 0:
                 break
             last_unlabeled_count = len(xu)
         
@@ -315,11 +283,13 @@ class LabelProp():
             Predicted classes, and indices of the data labeled with those
                 classes (if we use threshold, not all unlabeled data are used).
         """
-        indices, preds = [], []
-        for i, row in enumerate(self.Y[self.nl:]):
-            THRESH = .99 if threshold else 0
-            if np.max(row) >= THRESH:
-                indices.append(i)
-                preds.append(np.argmax(row))
+        if threshold:
+            THRESH = 0.99
+            Yu = self.Y[self.nl:]
+            indices = np.squeeze(np.argwhere(np.max(Yu, axis=1) >= THRESH), axis=1)
+            preds = np.argmax(Yu[indices,:], axis=1)
+        else:
+            indices = [i for i in range(self.nu)]
+            preds = np.argmax(Yu, axis=1)
 
-        return preds, indices
+        return list(preds), list(indices)
