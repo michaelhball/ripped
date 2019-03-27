@@ -26,6 +26,10 @@ def encode_data_with_pretrained(data_source, train_ds, text_field, encoder_model
     ys_u = np.array([eg.y for eg in examples_u])
     xs_u_unencoded = [eg.x for eg in examples_u]
 
+    # normalise
+    xs_l = np.array([x / np.linalg.norm(x) for x in xs_l])
+    xs_u = np.array([x / np.linalg.norm(x) for x in xs_u])
+
     return xs_l, ys_l, xs_u, ys_u, xs_u_unencoded
 
 
