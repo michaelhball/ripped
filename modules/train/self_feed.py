@@ -10,7 +10,7 @@ from .basic_trainer import do_basic_train_and_classify
 __all__ = ['self_feed']
 
 
-def self_feed(data_source, dir_to_save, iter_func, model_wrapper, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params, THRESH=0.99):
+def self_feed(data_source, dir_to_save, iter_func, model_wrapper, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params, thresh=0.99):
     """
     Implements a self-training algorithm.s
     Args:
@@ -43,7 +43,7 @@ def self_feed(data_source, dir_to_save, iter_func, model_wrapper, labeled_exampl
 
         new_unlabeled_examples = []
         for i, (conf, pred) in enumerate(zip(confidences, preds)):
-            if conf > THRESH:
+            if conf > thresh:
                 labeled_examples.append(Example.fromdict({'x': unlabeled_examples[i].x, 'y': pred}, {'x': ('x', text_field), 'y': ('y', label_field)}))
                 num_added += 1
                 if pred == unlabeled_examples[i].y:
