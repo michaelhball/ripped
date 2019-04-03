@@ -31,9 +31,9 @@ def self_feed(data_source, dir_to_save, iter_func, model_wrapper, labeled_exampl
     while True:
         new_train_ds = data.Dataset(labeled_examples, {'x': text_field, 'y': label_field})
 
-        if data_source in ('askubuntu', 'chatbot', 'webapps'):
+        if data_source in ('askubuntu', 'chatbot'):
             test_ds_temp = data.Dataset(unlabeled_examples, {'x': text_field, 'y': label_field})
-            confidences, preds = do_basic_train_and_classify(new_train_ds, test_ds_temp, classifier_params, return_statistics=False)
+            confidences, preds = do_basic_train_and_classify(new_train_ds, test_ds_temp, classifier_params, data_source, return_statistics=False)
         else:
             ps = classifier_params
             args = [ps['model_name'], ps['encoder_model'], iter_func, model_wrapper, dir_to_save, nn.CrossEntropyLoss(),

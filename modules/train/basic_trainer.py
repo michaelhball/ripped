@@ -24,7 +24,7 @@ transformers = {'tfidf': TfidfTransformer}
 classifiers = {'nb': MultinomialNB, 'lr': LogisticRegression, 'sgd': SGDClassifier, 'forest': RandomForestClassifier, 'xgboost': XGBClassifier}
 
 
-def do_basic_train_and_classify(train_ds, test_ds, params, return_statistics=True):
+def do_basic_train_and_classify(train_ds, test_ds, params, data_source, return_statistics=True):
     """
     Fits and classifies using an sklearn OOB model.
     Args:
@@ -53,7 +53,8 @@ def do_basic_train_and_classify(train_ds, test_ds, params, return_statistics=Tru
     if return_statistics:
         predictions = classifier.predict(test_text)
         acc = accuracy_score(predictions, test_Y)
-        report = classification_report(predictions, test_Y, output_dict=True)['weighted avg']
+        avg = "macro avg" if data_source == "chat" else "weighted avg"
+        report = classification_report(predictions, test_Y, output_dict=True)[avg]
         p, r, f1 = report['precision'], report['recall'], report['f1-score']
         return acc, p, r, f1
     else: # means we're doing self-training
