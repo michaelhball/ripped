@@ -51,3 +51,16 @@ def kmeans(X_l, X_u, Y_l, n_clusters):
     predictions = mode(np.array(all_predictions), axis=0).mode[0][nl:]
 
     return predictions
+
+
+def recursive_kmeans(x_l, x_u, y_l, n_clusters):
+    nl = len(x_l)
+    X = np.concatenate([X_l, X_u])
+    all_predictions = []
+    indices = []
+
+    clusterer = KMeans(n_clusters=n_clusters, n_init=10)
+    clusters = {}
+    while True:
+        preds = clusterer.fit_predict(X)
+        # for i, cluster in enumerate(preds):
