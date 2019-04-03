@@ -1,14 +1,12 @@
 import argparse
 
-from torchtext import data, vocab
-from torchtext.data.example import Example
-
 from modules.data_iterators import *
 from modules.data_readers import *
 from modules.models import *
 from modules.model_wrappers import *
 from modules.ssl import *
 from modules.utilities import *
+from modules.visualisation import *
 
 from modules.utilities.imports import *
 from modules.utilities.imports_torch import *
@@ -27,7 +25,7 @@ parser.add_argument('--sim_measure', type=str, default='cosine', help='cosine|st
 args = parser.parse_args()
 
 
-def get_results(algorithm, data_source, classifier, encoder=None, similarity_measure=None):
+def get_results(encoder, data_source, classifier, algorithm=None, similarity_measure='cosine'):
     """
     Get trial results for a given experiment setup from results file.
     Args:
@@ -39,90 +37,105 @@ def get_results(algorithm, data_source, classifier, encoder=None, similarity_mea
     Returns:
         Dictionary of statistical results (accuracy means, stds, f1s, etc).
     """
-    from results_chat import results_chat
-    from results_askubuntu import results_askubuntu
-    from results_chatbot import results_chatbot
-    from results_webapps import results_webapps
-    r = {'chat': results_chat, 'askubuntu': results_askubuntu, 'chatbot': results_chatbot, 'webapps': results_webapps}
+    from results.askubuntu import results_askubuntu
+    from results.chatbot import results_chatbot
+    from results.webapps import results_webapps
+    from results.chat import results_chat
+    from results.trec import results_trec
+    r = {'chat': results_chat, 'askubuntu': results_askubuntu, 'chatbot': results_chatbot, 'webapps': results_webapps, 'trec': results_trec}
 
-    if algorithm is 'supervised' or algorithm is 'self_feed':
-        results_name = f'{algorithm}__{classifier}'
+    if encoder in ('supervised', 'self_feed'):
+        results_name = f'{encoder}__{classifier}'
     else:
-        results_name = f'{algorithm}__{encoder}__{similarity_measure}__{classifier}'
-    
-    return r[data_source][results_name]
+        results_name = f'{algorithm}__{encoder}__{classifier}'
+
+    data = r[data_source][results_name]
+    if data_source in ("chatbot", "webapps", "askubuntu"): # using lowest frac as 1-shot
+        for k, v in data.items():
+            if type(v) == list:
+                data[k] = v[:-1]
+
+    return data
 
 
 if __name__ == "__main__":
-    
-    # MODELS TO TRY for STS/NLI:
-    # Idea: use pre-trained Infersent and then just put a big classifier over this? Because Infersent is trained on SNLI, => should express similarity better.
-    # easiest way is to do the same thing, encode all sentences in our IC datasets and just access these values?
-    # Multi-Task Learning framework (two STS datasets, two NLI datasets) - => two heads with one common encoder (a big, BiLSTM ? initialized with GloVe).
 
-    # INTENT CLASSIFICATION WITH SEMI_SUPERVISED LEARNING
     if args.task.startswith("propagater"):
         # params
         t = args.task.split("_")
-        task = t[0]; data_source = t[1]
+        task = t[0]; data_source = t[1]; learning_type = t[2]
         intents = pickle.load(Path(f'./data/ic/{data_source}/intents.pkl').open('rb'))
         C = len(intents)
-        EMB_DIM = 300
 
-        # we are getting data augmentation w 99% accuracy with lp_recursive... but NB isn't getting good acc or f1 with this => maybe need a different algorithm for some reason. -- this is for ask_ubuntu
-        if data_source in ('chatbot', 'webapps', 'askubuntu'):
-            classifier = 'sgd' if data_source is 'webapps' else 'nb'
-            class_args = {
-                'askubuntu': {'alpha': 1},
-                'chatbot': {'alpha': 0.1},
-                'webapps': {'loss': 'hinge', 'penalty': 'l2', 'alpha': 0.01, 'learning_rate': 'optimal'},
-            }[data_source]
-            classifier_params = {
-                'vectoriser': 'count',
-                'transformer': 'tfidf',
-                'classifier': classifier,
-                'vect_args': {'analyzer': 'char', 'binary': False, 'max_df': 0.5, 'ngram_range': (2,3)},
-                'trans_args': {'norm': 'l2', 'use_idf': True},
-                'class_args': class_args
-            }
-        else:
-            classifier_params = {
-                'model_name': 'test',
-                'encoder_model': 'pool_max',
-                'encoder_args': ['max'],
-                'emb_dim': EMB_DIM,
-                'layers': [EMB_DIM, 100, C],
-                'drops': [0, 0],
-                'bs': 64,
-                'lr': 6e-4
-            }
-
+        # outline params for classifier
+        classifier = 'sgd' if data_source in ('webapps', 'trec', 'chat') else 'nb'
+        class_args = {
+            'askubuntu': {'alpha': 1},
+            'chatbot': {'alpha': 0.1},
+            'webapps': {'loss': 'hinge', 'penalty': 'l2', 'alpha': 1e-2, 'learning_rate': 'optimal'},
+            'chat': {'loss': 'hinge', 'penalty': 'l2', 'alpha': 1e-4, 'learning_rate': 'optimal'},
+            'trec': {'loss': 'hinge', 'penalty': 'l2', 'alpha': 1e-4, 'learning_rate': 'optimal'}
+        }[data_source]
+        ngram_range = (2,5) if data_source in ('trec', 'chat') else (2,3)
+        classifier_params = {
+            'vectoriser': 'count',
+            'transformer': 'tfidf',
+            'vect_args': {'analyzer': 'char', 'binary': False, 'max_df': 0.5, 'ngram_range': ngram_range},
+            'trans_args': {'norm': 'l2', 'use_idf': True},
+            'classifier': classifier,
+            'class_args': class_args
+        }
+        
         # create datasets/vocab
         TEXT = data.Field(sequential=True)
         LABEL = data.LabelField(dtype=torch.int, use_vocab=False)
-        val = False if data_source in ('webapps', 'chatbot', 'askubuntu') else True
-        train_ds, val_ds, test_ds = IntentClassificationDataReader(f'./data/ic/{data_source}/', '_tknsd.pkl', TEXT, LABEL, val=val).read()
+        train_ds, val_ds, test_ds = IntentClassificationDataReader(f'./data/ic/{data_source}/', '_tknsd.pkl', TEXT, LABEL, val=False).read()
         glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
         TEXT.build_vocab(train_ds, vectors=glove_embeddings)
 
-        # run augmentation trials
+        # dim-reduced dataset visualisation
+        if args.subtask == "dim_reduce":
+            visualise_data(data_source, args.encoder_model, (train_ds, val_ds, test_ds), intents, TEXT, type_='pca+tsne', show=True)
+            # for encoder in ('pretrained_glove', 'pretrained_elmo', 'pretrained_bert', 'pretrained_infersent', 'sts_sick', 'sts_stsbenchmark', 'sts_both'):
+            #     visualise_data(data_source, encoder, (train_ds, val_ds, test_ds), intents, TEXT, type_='pca+tsne', show=True)
+            assert(False)
+
+        # parameters to collect
         aug_algo = args.aug_algo
         dir_to_save = f'{args.saved_models}/ic/{data_source}'
         class_acc_means, class_acc_stds = [], []
         aug_acc_means, aug_acc_stds, aug_frac_means = [], [], []
-        p_means, p_stds, r_means, r_stds, f_means, f_stds = [],[],[],[],[],[]
+        p_means, p_stds, r_means, r_stds, f_means, f_stds = [], [], [], [], [], []
 
         fracs = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05]
-        if data_source in ("webapps", 'askubuntu'):
+        if data_source == "askubuntu":
             fracs = fracs[:-2]
+        elif data_source == "webapps":
+            fracs = fracs[:-3]
+        elif data_source == "chat":
+            fracs = [0.5, 0.4, 0.3, 0.2, 0.1]
         if aug_algo == 'none':
             fracs = [1] + fracs
 
-        # fracs = [0]
+        # fracs = [0] # testing 1 eg from each class special case.
+        # fracs = [1]
+
+        if learning_type == 'transductive':
+            fracs = [1]
+
+        K = 200
+        if data_source == "chatbot" and (aug_algo.startswith("lp") or aug_algo == "kmeans"):
+            K = 40
+        elif data_source == 'chat':
+            K = 20 if aug_algo.startswith('knn') else 5
+        elif aug_algo == "kmeans":
+            K = 100
+        
+        # K = 20
 
         for FRAC in fracs:
-            statistics = repeat_augment_and_train(dir_to_save, data_source, aug_algo, args.encoder_model, args.sim_measure,
-                                        (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, C, classifier_params, k=10)
+            statistics = repeat_augment_and_train(dir_to_save, get_ic_data_iterators, IntentWrapper, data_source, aug_algo, args.encoder_model, args.sim_measure,
+                                        (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, C, classifier_params, k=K, learning_type=learning_type)
             class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, aug_frac_mean, p_mean, p_std, r_mean, r_std, f_mean, f_std = statistics
             class_acc_means.append(class_acc_mean); class_acc_stds.append(class_acc_std)
             aug_acc_means.append(aug_acc_mean); aug_acc_stds.append(aug_acc_std); aug_frac_means.append(aug_frac_mean)
@@ -134,91 +147,279 @@ if __name__ == "__main__":
                     ('r_stds', r_stds), ('f1_means', f_means), ('f1_stds', f_stds)]:
             print(f"'{n}': {s},")
 
-    # PLOT RESULTS
-    elif args.task.startswith("plot"):
+    # RESULTS
+    elif args.task.startswith("results"):
         data_source = args.task.split('_')[1]
-        classifier = {'chatbot': 'nb', 'askubuntu': 'nb', 'webapps': 'sgd', 'chat': 'pool_max'}[data_source]
+        classifier = {'chatbot': 'nb', 'askubuntu': 'nb', 'webapps': 'sgd', 'chat': 'sgd'}[data_source]
 
-        if args.subtask == "vs_baseline":
-            ss_methods = { # possible colors: c, b, g, m, y, k
-                
-                # BASELINE
-                # "self-feed": {'algorithm': 'self_feed', 'colour': 'k'},
-                
-                # KNN-BASE
-                # "KNN_b-GLoVe": {'algorithm': 'knn_base', 'encoder': 'glove', 'similarity': 'cosine', 'colour': 'c'},
-                # "KNN_b-ELMo": {'algorithm': 'knn_base', 'encoder': 'elmo', 'similarity': 'cosine', 'colour': 'b'},
-                # "KNN_b-Bert": {'algorithm': 'knn_base', 'encoder': 'bert', 'similarity': 'cosine', 'colour': 'g'}, # BEST
-                # "KNN_b-InferSent": {'algorithm': 'knn_base', 'encoder': 'infersent', 'similarity': 'cosine', 'colour': 'y'},
-                # "KNN_b-STS_sick": {'algorithm': 'knn_base', 'encoder': 'sts_sick', 'similarity': 'cosine', 'colour': 'c'},
-                # "KNN_b-STS_stsbenchmark": {'algorithm': 'knn_base', 'encoder': 'sts_stsbenchmark', 'similarity': 'cosine', 'colour': 'b'},
-                # "KNN_b-STS_both": {'algorithm': 'knn_base', 'encoder': 'sts_both', 'similarity': 'cosine', 'colour': 'y'},
+        if args.subtask == "algo_average":
 
-                # KNN-Threshold
-                # "KNN_t-GLoVe": {'algorithm': 'knn_threshold', 'encoder': 'glove', 'similarity': 'cosine', 'colour': 'c'},
-                # "KNN_t-ELMo": {'algorithm': 'knn_threshold', 'encoder': 'elmo', 'similarity': 'cosine', 'colour': 'b'},
-                # "KNN_t-Bert": {'algorithm': 'knn_threshold', 'encoder': 'bert', 'similarity': 'cosine', 'colour': 'b'}, # BEST
-                # "KNN_t-InferSent": {'algorithm': 'knn_threshold', 'encoder': 'infersent', 'similarity': 'cosine', 'colour': 'y'},
-                # "KNN_t-STS_sick": {'algorithm': 'knn_threshold', 'encoder': 'sts_sick', 'similarity': 'cosine', 'colour': 'c'},
-                # "KNN_t-STS_stsbenchmark": {'algorithm': 'knn_threshold', 'encoder': 'sts_stsbenchmark', 'similarity': 'cosine', 'colour': 'b'},
-                # "KNN_t-STS_both": {'algorithm': 'knn_threshold', 'encoder': 'sts_both', 'similarity': 'cosine', 'colour': 'c'},
-                
-                # LP-Base
-                # "LP_b-GLoVe": {'algorithm': 'lp_base', 'encoder': 'glove', 'similarity': 'cosine', 'colour': 'c'},
-                # "LP_b-ELMo": {'algorithm': 'lp_base', 'encoder': 'elmo', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_b-Bert": {'algorithm': 'lp_base', 'encoder': 'bert', 'similarity': 'cosine', 'colour': 'g'}, # BEST
-                # "LP_b-InferSent": {'algorithm': 'lp_base', 'encoder': 'infersent', 'similarity': 'cosine', 'colour': 'y'},
-                # "LP_b-STS_sick": {'algorithm': 'lp_base', 'encoder': 'sts_sick', 'similarity': 'cosine', 'colour': 'c'},
-                # "LP_b-STS_sick (STS)": {'algorithm': 'lp_base', 'encoder': 'sts_sick', 'similarity': 'sts', 'colour': 'c'},
-                # "LP_b-STS_stsbenchmark": {'algorithm': 'lp_base', 'encoder': 'sts_stsbenchmark', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_b-STS_stsbenchmark (STS)": {'algorithm': 'lp_base', 'encoder': 'sts_stsbenchmark', 'similarity': 'sts', 'colour': 'b'},
-                # "LP_b-STS_both": {'algorithm': 'lp_base', 'encoder': 'sts_both', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_b-STS_both (STS)": {'algorithm': 'lp_base', 'encoder': 'sts_both', 'similarity': 'sts', 'colour': 'y'},
+            method_names = {'self_feed': 'self-train', 'lp_base': 'lp-B', 'lp_threshold': 'lp-T', 'lp_recursive': 'lp-R', 'knn_base': 'knn-B', 'kmeans': 'kmeans-B'}
 
-                # LP-Threshold
-                # "LP_t-GLoVe": {'algorithm': 'lp_threshold', 'encoder': 'glove', 'similarity': 'cosine', 'colour': 'c'},
-                # "LP_t-ELMo": {'algorithm': 'lp_threshold', 'encoder': 'elmo', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_t-Bert": {'algorithm': 'lp_threshold', 'encoder': 'bert', 'similarity': 'cosine', 'colour': 'm'}, # BEST?
-                # "LP_t-InferSent": {'algorithm': 'lp_threshold', 'encoder': 'infersent', 'similarity': 'cosine', 'colour': 'g'},
-                # "LP_t-STS_sick": {'algorithm': 'lp_threshold', 'encoder': 'sts_sick', 'similarity': 'cosine', 'colour': 'c'},
-                # "LP_t-STS_sick (STS)": {'algorithm': 'lp_threshold', 'encoder': 'sts_sick', 'similarity': 'sts', 'colour': 'c'},
-                # "LP_t-STS_stsbenchmark": {'algorithm': 'lp_threshold', 'encoder': 'sts_stsbenchmark', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_t-STS_stsbenchmark (STS)": {'algorithm': 'lp_threshold', 'encoder': 'sts_stsbenchmark', 'similarity': 'sts', 'colour': 'b'},
-                # "LP_t-STS_both": {'algorithm': 'lp_threshold', 'encoder': 'sts_both', 'similarity': 'cosine', 'colour': 'm'},
-                # "LP_t-STS_both (STS)": {'algorithm': 'lp_threshold', 'encoder': 'sts_both', 'similarity': 'sts', 'colour': 'y'},
+            STAT = 'f1'
+
+            algos = ["lp_base", "lp_threshold", "lp_recursive", "knn_base", "kmeans"]
+            methods = [method_names[a] for a in algos]
+            encoders = ['glove', 'elmo', 'bert', 'infersent', 'sts_stsbenchmark', 'sts_both']
+            data_sources = ["chatbot", 'webapps', 'askubuntu', 'chat']
+            data = {}
+            
+            if STAT == "aug_acc": average_across_datasets = {m: {f'{STAT}s': [0,0,0,0,0], 'stds': [0,0,0,0,0], 'n': 200, 'aug_fracs': [0,0,0,0,0]} for m in ["supervised"]+methods}
+            else: average_across_datasets = {m: {f'{STAT}s': [0,0,0,0,0], 'stds': [0,0,0,0,0], 'n': 200} for m in ['supervised']+methods}
+
+            for ds in data_sources:
+                classi = {'chatbot': 'nb', 'askubuntu': 'nb', 'webapps': 'sgd', 'chat': 'sgd'}[ds]
+
+                baseline_data = get_results('supervised', ds, classi, algorithm=None)
+                baseline_f1s = baseline_data[f'{STAT}_means'][1:]
+                baseline_stds = baseline_data[f'{STAT}_stds'][1:]
+
+                ds_data = {m: [0 for _ in range(len(baseline_f1s))] for m in methods}
+                ds_data['supervised'] = {f'{STAT}s': baseline_f1s, 'stds': baseline_stds, 'n': baseline_data['n'], 'fracs': baseline_data['fracs'][1:]}
+
+                average_across_datasets['supervised'][f'{STAT}s'] = np.add(average_across_datasets['supervised'][f'{STAT}s'], baseline_f1s[-5:])
+                average_across_datasets['supervised']['stds'] = np.add(average_across_datasets['supervised']['stds'], baseline_stds[-5:])
+                if STAT == "aug_acc": average_across_datasets['supervised']['aug_fracs'] = np.add(average_across_datasets['supervised']['aug_fracs'], baseline_data['aug_frac_means'][-5:])
+
+                if ds == "chatbot":
+                    sf_data = get_results("self_feed", ds, classi)
+                    ds_data["self-train"] = {f'{STAT}s': sf_data[f'{STAT}_means'], 'stds': sf_data[f'{STAT}_stds'], 'n': baseline_data['n']}
+
+                for algo in algos:
+                    f1s = [0 for _ in range(len(baseline_f1s))]
+                    stds = [0 for _ in range(len(baseline_stds))]
+
+                    if STAT == "aug_acc": aug_fracs = [0 for _ in range(len(baseline_f1s))]
+
+                    for encoder in encoders:
+                        enc_data = get_results(encoder, ds, classi, algo)
+                        f1s = np.add(f1s, enc_data[f'{STAT}_means'])
+                        stds = np.add(stds, enc_data[f'{STAT}_stds'])
+
+                        if STAT == "aug_acc": aug_fracs = np.add(aug_fracs, enc_data['aug_frac_means'])
+                            
+                    f1s /= len(encoders)
+                    stds /= len(encoders)
+
+                    if STAT == "aug_acc":
+                        aug_fracs /= len(encoders)
+                        ds_data[method_names[algo]] = {f'{STAT}s': f1s, 'stds': stds, 'n': baseline_data['n'], 'aug_fracs': aug_fracs}
+                        average_across_datasets[method_names[algo]]['aug_fracs'] = np.add(average_across_datasets[method_names[algo]]['aug_fracs'], aug_fracs[-5:])
+                    else:
+                        ds_data[method_names[algo]] = {f'{STAT}s': f1s, 'stds': stds, 'n': baseline_data['n']}
+
+                    average_across_datasets[method_names[algo]][f'{STAT}s'] = np.add(average_across_datasets[method_names[algo]][f'{STAT}s'], f1s[-5:])
+                    average_across_datasets[method_names[algo]]['stds'] = np.add(average_across_datasets[method_names[algo]]['stds'], stds[-5:])
+
+                data[ds] = ds_data
+            
+            methods.insert(0, 'supervised')
+            for method in methods:
+                average_across_datasets[method][f'{STAT}s'] /= len(data_sources)
+                average_across_datasets[method]['stds'] /= len(data_sources)
+                if STAT == "aug_acc":
+                    average_across_datasets[method]['aug_fracs'] /= len(data_sources)
+
+            import matplotlib.pyplot as plt
+            from modules.utilities.math import confidence_interval
+            with plt.style.context('seaborn-whitegrid'):
+
+                stat = {'p': 'precision', 'r': 'recall', 'f1': 'f1 score', 'aug_acc': 'augmentation accuracy'}[STAT]
+
+                # # average for each method across all datasets
+                # average_across_datasets['lp-R']['aug_fracs'][3] = 0.72
+                # fracs = [5, 4, 3, 2, 1]
+                # methods = methods[1:] # ignore supervised
+                # for idx, method in enumerate(methods):
+                #     means = average_across_datasets[method][f'{STAT}s']
+                #     cis = [confidence_interval(0.95, std, 200) for std in average_across_datasets[method]['stds']]
+                #     plt.errorbar(fracs, means, yerr=cis, fmt=f'C{idx}o-', ecolor=f'C{idx}', elinewidth=1, capsize=1, label=f'{method}', linewidth=2)
+                #     # if STAT == "aug_acc" and method in ("lp-T", "lp-R"):
+                #     #     plt.plot(fracs, average_across_datasets[method]['aug_fracs'], f'C{idx}o:', linewidth=2, label=f'{method} frac used')
+                # plt.title(f'Augmentation accuracy & fraction of unlabeled data used for two LP variants')
+                # plt.xticks([1,2,3,4,5])
+                # plt.xlabel('fraction indices (1 = lowest fraction tested for each dataset)')
+                
+
+                # area between f1 curves for each method averaged across embeddings
+                y0 = data[data_source]["supervised"]['f1s']
+                methods = methods[1:]
+                if data_source == "chatbot":
+                    methods.insert(1, "self-train")
+                for method in methods:
+                    y1 = data[data_source][method]['f1s']
+                    area = np.trapz(np.array(y1)-np.array(y0), dx=1)
+                    print(''); print(method); print(round(area*100, 2))
+
+
+                # # average for each method on a given dataset.
+                # if data_source == "chatbot":
+                #     methods.insert(1, "self-train")
+                # fracs = data[data_source]['supervised']['fracs']
+                # for idx, method in enumerate(methods):
+                #     means = data[data_source][method][f'{STAT}s']
+                #     cis = [confidence_interval(0.95, std, 200) for std in data[data_source][method]['stds']]
+                #     plt.errorbar(fracs, means, yerr=cis, fmt=f'C{idx}o-', ecolor=f'C{idx}', elinewidth=1, capsize=1, label=f'{method}', linewidth=2)
+                # plt.title(f"Sied: {stat} for each augmentation algorithm")
+                # plt.xlabel('fraction of labeled data')
+                
+
+
+                # plt.ylabel(f'{STAT}')
+                # plt.legend()
+                # plt.grid(b=True)
+                # plt.show()
+
+            assert(False)
+
+
+            encoders = ['glove', 'elmo', 'bert', 'infersent', 'sts_sick', 'sts_stsbenchmark', 'sts_both']
+            encoders = ['glove', 'elmo', 'bert', 'infersent', 'sts_stsbenchmark', 'sts_both']
+            baseline_f1s = get_results('supervised', data_source, classifier, algorithm=None)['f1_means'][1:]
+            r_baseline_f1s = [round(f1*100,1) for f1 in baseline_f1s]
+            # if style == "latex":
+            #     print('\nsupervised\n' + ' & '.join([str(f1) for f1 in r_baseline_f1s])+'\n')
+            # elif style == "excel":
+            print('\nsupervised\n' + '\n'.join([str(f1) for f1 in r_baseline_f1s]))
+                
+            f1s = [0 for _ in range(len(baseline_f1s))]
+            algo = args.aug_algo
+            for encoder in encoders:
+                f1s = np.add(f1s, get_results(encoder, data_source, classifier, algorithm=algo)['f1_means'])
+            f1s = np.divide(f1s, len(encoders))
+            r_f1s = [round(f1*100,1) for f1 in f1s]
+            print(algo)
+            # if style == "excel":
+            print('\n'.join([str(f1) for f1 in r_f1s]))
+            
+        if args.subtask == "emb_average":
+            # NEED TO IMPLEMENT THIS TOO...
+            pass
+
+                
+
+
+
+        elif args.subtask.startswith("print"):
+            style = args.subtask.split('_')[1]
+            encoders = ['glove', 'elmo', 'bert', 'infersent', 'sts_sick', 'sts_stsbenchmark', 'sts_both']
+            if data_source == "chatbot": encoders.insert(0, 'self_feed')
+            baseline_f1s = get_results('supervised', data_source, classifier, algorithm=None)['f1_means'][1:]
+            r_baseline_f1s = [round(f1*100,1) for f1 in baseline_f1s]
+            if style == "latex":
+                print('\nsupervised\n' + ' & '.join([str(f1) for f1 in r_baseline_f1s])+'\n')
+            elif style == "excel":
+                print('\nsupervised\n' + '\n'.join([str(f1) for f1 in r_baseline_f1s]))
+            
+            for encoder in encoders:
+                algorithm = args.aug_algo if encoder != 'self_feed' else None
+                f1s = get_results(encoder, data_source, classifier, algorithm=algorithm)['f1_means']
+                r_f1s = [round(f1*100,1) for f1 in f1s]
+
+                if style == "latex":
+                    abs_diffs = [i - j for i,j in zip(f1s, baseline_f1s)]
+                    perc_diffs = [round((i/j)*100,1) for i,j in zip(abs_diffs,baseline_f1s)]
+                    print(encoder)
+                    print(' & '.join([str(f1) for f1 in r_f1s]))
+                    print(' & '.join([str(p) for p in perc_diffs])+'\n')
+                elif style == "excel":
+                    print(f'\n{encoder}\n' + '\n'.join([str(f1) for f1 in r_f1s]))
+
+        elif args.subtask == "calc_area":
+            y0 = get_results('supervised', data_source, classifier)['f1_means'][1:]
+            encoders = ['glove', 'elmo', 'bert', 'infersent', 'sts_sick', 'sts_stsbenchmark', 'sts_both']
+            if data_source == "chatbot": encoders.insert(0, 'self_feed')
+            for encoder in encoders:
+                algorithm = args.aug_algo if encoder != 'self_feed' else None
+                y1 = get_results(encoder, data_source, classifier, algorithm=algorithm)['f1_means']
+                area = np.trapz(np.array(y1)-np.array(y0), dx=1)
+                print(''); print(encoder); print(round(area*100, 2))
+
+        elif args.subtask == "plot_stat":
+            plot_type = 'embeddings'
+            to_plot = 'f1'
+            ds_name = {'chatbot': 'Chatbot', 'askubuntu': "AskUbuntu", 'webapps': 'Webapps', 'chat': 'Sied'}[data_source]
+            # title = f'{ds_name}: F1 scores for STS-bench encodings with different propagation methods'
+            title = f'{ds_name}: F1 using lp-R with each embedding model'
+            methods = {
+                "self-feed": {'algorithm': None, 'encoder': 'self_feed'},
+
+                # ELMo
+                # "KNN-b": {"algorithm": 'knn_base', 'encoder': 'elmo'},
+                # "KNN-t": {"algorithm": 'knn_threshold', 'encoder': 'elmo'},
+                # "LP-t": {"algorithm": 'lp_threshold', 'encoder': 'elmo'},
+                # "LP-b": {"algorithm": 'lp_base', 'encoder': 'elmo'},
+                # "LP-p1nn": {"algorithm": 'lp_p1nn', 'encoder': 'elmo'},
+                # "LP-r": {"algorithm": 'lp_recursive', 'encoder': 'elmo'},
+                # "K-means": {"algorithm": "kmeans", 'encoder': 'elmo'},
+
+                # BERT
+                # "KNN-b": {"algorithm": 'knn_base', 'encoder': 'bert'},
+                # "KNN-t": {"algorithm": 'knn_threshold', 'encoder': 'bert'},
+                # "LP-b": {"algorithm": 'lp_base', 'encoder': 'bert'},
+                # "LP-t": {"algorithm": 'lp_threshold', 'encoder': 'bert'},
+                # "LP-p1nn": {"algorithm": 'lp_p1nn', 'encoder': 'bert'},
+                # "LP-r": {"algorithm": 'lp_recursive', 'encoder': 'bert'},
+                # "K-means": {"algorithm": "kmeans", 'encoder': 'bert'},
+
+                # InferSent
+                # "KNN-b": {"algorithm": 'knn_base', 'encoder': 'infersent'},
+                # "KNN-t": {"algorithm": 'knn_threshold', 'encoder': 'infersent'},
+                # "LP-b": {"algorithm": 'lp_base', 'encoder': 'infersent'},
+                # "LP-t": {"algorithm": 'lp_threshold', 'encoder': 'infersent'},
+                # "LP-p1nn": {"algorithm": 'lp_p1nn', 'encoder': 'infersent'},
+                # "LP-r": {"algorithm": 'lp_recursive', 'encoder': 'infersent'},
+                # "K-means": {"algorithm": "kmeans", 'encoder': 'infersent'},
+
+                # STS-sick
+                # "KNN-b": {"algorithm": 'knn_base', 'encoder': 'sts_sick'},
+                # "KNN-t": {"algorithm": 'knn_threshold', 'encoder': 'sts_sick'},
+                # "LP-b": {"algorithm": 'lp_base', 'encoder': 'sts_sick'},
+                # "LP-t": {"algorithm": 'lp_threshold', 'encoder': 'sts_sick'},
+                # "LP-p1nn": {"algorithm": 'lp_p1nn', 'encoder': 'sts_sick'},
+                # "LP-r": {"algorithm": 'lp_recursive', 'encoder': 'sts_sick'},
+                # "K-means": {"algorithm": "kmeans", 'encoder': 'sts_sick'},
+                
+                # STS-bench
+                # "KNN-b": {"algorithm": 'knn_base', 'encoder': 'sts_stsbenchmark'},
+                # "KNN-t": {"algorithm": 'knn_threshold', 'encoder': 'sts_stsbenchmark'},
+                # "LP-b": {"algorithm": 'lp_base', 'encoder': 'sts_stsbenchmark'},
+                # "LP-t": {"algorithm": 'lp_threshold', 'encoder': 'sts_stsbenchmark'},
+                # "LP-p1nn": {"algorithm": 'lp_p1nn', 'encoder': 'sts_stsbenchmark'},
+                # "LP-r": {"algorithm": 'lp_recursive', 'encoder': 'sts_stsbenchmark'},
+                # "K-means": {"algorithm": "kmeans", 'encoder': 'sts_stsbenchmark'},
+
+                # STS-both
+                # "KNN-b": {"algorithm": 'knn_base', 'encoder': 'sts_both'},
+                # "KNN-t": {"algorithm": 'knn_threshold', 'encoder': 'sts_both'},
+                # "LP-b": {"algorithm": 'lp_base', 'encoder': 'sts_both'},
+                # "LP-t": {"algorithm": 'lp_threshold', 'encoder': 'sts_both'},
+                # "LP-p1nn": {"algorithm": 'lp_p1nn', 'encoder': 'sts_both'},
+                # "LP-r": {"algorithm": 'lp_recursive', 'encoder': 'sts_both'},
+                # "K-means": {"algorithm": "kmeans", 'encoder': 'sts_both'},
 
                 # LP-Recursive
-                # "LP_r-GLoVe": {'algorithm': 'lp_recursive', 'encoder': 'glove', 'similarity': 'cosine', 'colour': 'c'},
-                # "LP_r-ELMo": {'algorithm': 'lp_recursive', 'encoder': 'elmo', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_r-Bert": {'algorithm': 'lp_recursive', 'encoder': 'bert', 'similarity': 'cosine', 'colour': 'c'}, # BEST OVERALL
-                "LP_r-InferSent": {'algorithm': 'lp_recursive', 'encoder': 'infersent', 'similarity': 'cosine', 'colour': 'y'},
-                # "LP_r-STS_sick": {'algorithm': 'lp_recursive', 'encoder': 'sts_sick', 'similarity': 'cosine', 'colour': 'c'},
-                # "LP_r-STS_sick (STS)": {'algorithm': 'lp_recursive', 'encoder': 'sts_sick', 'similarity': 'sts', 'colour': 'c'},
-                # "LP_r-STS_stsbenchmark": {'algorithm': 'lp_recursive', 'encoder': 'sts_stsbenchmark', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_r-STS_stsbenchmark (STS)": {'algorithm': 'lp_recursive', 'encoder': 'sts_stsbenchmark', 'similarity': 'sts', 'colour': 'b'},
-                # "LP_r-STS_both": {'algorithm': 'lp_recursive', 'encoder': 'sts_both', 'similarity': 'cosine', 'colour': 'g'}, # BEST OVERALL
-                # "LP_r-STS_both (STS)": {'algorithm': 'lp_recursive', 'encoder': 'sts_both', 'similarity': 'sts', 'colour': 'y'},
-
-                # LP-P1NN
-                # "LP_p1nn-GLoVe": {'algorithm': 'lp_p1nn', 'encoder': 'glove', 'similarity': 'cosine', 'colour': 'c'},
-                # "LP_p1nn-ELMo": {'algorithm': 'lp_p1nn', 'encoder': 'elmo', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_p1nn-Bert": {'algorithm': 'lp_p1nn', 'encoder': 'bert', 'similarity': 'cosine', 'colour': 'k'},
-                # "LP_p1nn-InferSent": {'algorithm': 'lp_p1nn', 'encoder': 'infersent', 'similarity': 'cosine', 'colour': 'y'},
-                # "LP_p1nn-STS_sick": {'algorithm': 'lp_p1nn', 'encoder': 'sts_sick', 'similarity': 'cosine', 'colour': 'c'},
-                # "LP_p1nn-STS_sick (STS)": {'algorithm': 'lp_p1nn', 'encoder': 'sts_sick', 'similarity': 'sts', 'colour': 'c'},
-                # "LP_p1nn-STS_stsbenchmark": {'algorithm': 'lp_p1nn', 'encoder': 'sts_stsbenchmark', 'similarity': 'cosine', 'colour': 'b'},
-                # "LP_p1nn-STS_stsbenchmark (STS)": {'algorithm': 'lp_p1nn', 'encoder': 'sts_stsbenchmark', 'similarity': 'sts', 'colour': 'b'},
-                # "LP_p1nn-STS_both": {'algorithm': 'lp_p1nn', 'encoder': 'sts_both', 'similarity': 'cosine', 'colour': 'k'},
-                # "LP_p1nn-STS_both (STS)": {'algorithm': 'lp_p1nn', 'encoder': 'sts_both', 'similarity': 'sts', 'colour': 'y'},
+                "GLoVe": {'algorithm': 'lp_recursive', 'encoder': 'glove'},
+                "ELMo": {'algorithm': 'lp_recursive', 'encoder': 'elmo'},
+                "BERT": {'algorithm': 'lp_recursive', 'encoder': 'bert'},
+                "InferSent": {'algorithm': 'lp_recursive', 'encoder': 'infersent'},
+                # "STS-sick": {'algorithm': 'lp_recursive', 'encoder': 'sts_sick'},
+                "STS-bench": {'algorithm': 'lp_recursive', 'encoder': 'sts_stsbenchmark'},
+                "STS-both": {'algorithm': 'lp_recursive', 'encoder': 'sts_both'},
+                
+                # K-Means
+                # "GloVe": {"algorithm": "kmeans", 'encoder': 'glove'},
+                # "ELMo": {"algorithm": "kmeans", 'encoder': 'elmo'},
+                # "BERT": {"algorithm": "kmeans", 'encoder': 'bert'},
+                # "InferSent": {"algorithm": "kmeans", 'encoder': 'infersent'},
+                # "STS-sick": {"algorithm": "kmeans", 'encoder': 'sts_sick'},
+                # "STS-bench": {"algorithm": "kmeans", 'encoder': 'sts_stsbenchmark'},
+                # "STS-both": {"algorithm": "kmeans", 'encoder': 'sts_both'},
             }
-            to_plot = ['f1']
-            title = 'Ask Ubuntu: DOOT DOOT'
-            plot_against_supervised(ss_methods, data_source, classifier, get_results, to_plot=to_plot, title=title, display=True, save_file=None)
-        elif args.subtask == "stats":
-            # plot all statistics for a given method (NB: in NLU datasets, weighted_recall=accuracy => don't print both)
-            method = {"algorithm": "lp_recursive", 'encoder': 'sts_both', 'similarity': 'cosine'}
-            statistics = [("f1", 'b'), ("p", 'y'), ("r", 'r')] # statistic, color
-            plot_statistics(method, data_source, classifier, get_results, statistics, display=True, save_file=None)
+            if plot_type != "embeddings" or data_source != "chatbot":
+                del methods['self-feed']
+            plot_one_statistic(methods, data_source, classifier, get_results, plot_type=plot_type, to_plot=to_plot, title=title)
+
 
     # INTENT CLASSIFICATION
     elif args.task.startswith("ic"):
@@ -264,35 +465,77 @@ if __name__ == "__main__":
             opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=0)
             train_losses, val_losses = wrapper.train(loss_func, opt_func)
 
+
     # SEMANTIC TEXTUAL SIMILARITY
     elif args.task.startswith("sts"):
-        C = 1
-        TEXT = data.Field(sequential=True)
-        LABEL = data.LabelField(dtype=torch.float, use_vocab=False)
-        BS = 128
-        LR = 6e-4
-        EMB_DIM = 300
-        HID_DIM = 300
-        layers = [2*EMB_DIM, 300, C]
-        drops = [0, 0]
+        # C = 1
+        # BS = 128
+        # LR = 6e-4
+        # EMB_DIM = 300
+        # HID_DIM = 300
+        # layers = [2*EMB_DIM, 300, C]
+        # drops = [0, 0]
         
         data_source = args.task.split('_')[1]
         saved_models_path = f'{args.saved_models}/sts/{data_source}'
-        train_file = f'./data/sts/{data_source}/train_tknsd1.pkl' # './data/sts/both_train_tknsd.pkl'
+        # train_file = f'./data/sts/{data_source}/train_tknsd1.pkl' # './data/sts/both_train_tknsd.pkl' 
         # train_file = './data/sts/both_train_tknsd.pkl'
         # val_file = f'./data/sts/{data_source}/val_tknsd.pkl'
-        test_file = f'./data/sts/{data_source}/test_tknsd1.pkl' # './data/sts/both_test_tknsd.pkl'
-        train_ds, val_ds, test_ds = STSDataReader(train_file, test_file, test_file, TEXT, LABEL).read() # using test data for validation
-        glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
-        TEXT.build_vocab(train_ds, vectors=glove_embeddings)
+        # test_file = f'./data/sts/{data_source}/test_tknsd1.pkl' # './data/sts/both_test_tknsd.pkl'
 
-        if args.encoder_model.startswith('pool'):
-            encoder_args = [encoder_model.split('_')[1]] # pool_type
-        elif args.encoder_model == 'lstm':
-            encoder_args = [EMB_DIM, 1, False, False] # hidden_size, num_layers, bidirectional, fine_tune_we
-        else:
-            print(f'there are no classes set up for encoder model "{args.encoder_model}"')
+        # TEXT = data.Field(use_vocab=False)
+        # LABEL = data.LabelField(dtype=torch.float, use_vocab=False)
+        # train_ds, val_ds, test_ds = STSDataReader(train_file, test_file, test_file, TEXT, LABEL).read() # using test data for validation
+        # glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
+        # TEXT.build_vocab(train_ds, vectors=glove_embeddings)
+
+        # if args.encoder_model.startswith('pool'):
+        #     encoder_args = [encoder_model.split('_')[1]] # pool_type
+        # elif args.encoder_model == 'lstm':
+        #     encoder_args = [EMB_DIM, 1, False, False, 'max'] # hidden_size, num_layers, bidirectional, fine_tune_we
+        # elif args.encoder_model == "pass":
+        #     encoder_args = []
+        # else:
+        #     print(f'there are no classes set up for encoder model "{args.encoder_model}"')
         
+
+        # TRAINING STS USING INFERSENT
+        # get all our pre-saved embeddings
+        sick_train_encs = pickle.load(Path('./data/sts/sick/infersent_train_embeddings.pkl').open('rb'))
+        sick_test_encs = pickle.load(Path('./data/sts/sick/infersent_test_embeddings.pkl').open('rb'))
+        stsbenchmark_train_encs = pickle.load(Path('./data/sts/stsbenchmark/infersent_train_embeddings.pkl').open('rb'))
+        stsbenchmark_test_encs = pickle.load(Path('./data/sts/stsbenchmark/infersent_test_embeddings.pkl').open('rb'))
+        sick_encs = dict(sick_train_encs, **sick_test_encs)
+        stsbenchmark_encs = dict(stsbenchmark_train_encs, **stsbenchmark_test_encs)
+        both_encs = dict(sick_encs, **stsbenchmark_encs)
+
+        train_file = f'./data/sts/sick/train_tknsd1.pkl'
+        test_file = f'./data/sts/sick/test_tknsd1.pkl'
+        TEXT = data.Field(sequential=True)
+        LABEL = data.LabelField(dtype=torch.float, use_vocab=False)
+        train_ds, val_ds, test_ds = STSDataReader(train_file, test_file, test_file, TEXT, LABEL).read() # using test data for validation
+
+        train_data = [{'x1': sick_encs[' '.join(eg.x1)], 'x2': sick_encs[' '.join(eg.x2)], 'y': float(eg.y)} for eg in train_ds.examples]
+        test_data = [{'x1': sick_encs[' '.join(eg.x1)], 'x2': sick_encs[' '.join(eg.x2)], 'y': float(eg.y)} for eg in test_ds.examples]
+
+        from modules.data_iterators import InferSentIterator
+        train_di = InferSentIterator(train_data, 64, randomise=True)
+        test_di = InferSentIterator(test_data, 64, randomise=False)
+
+        emb_dim = 300
+        vocab = None
+        encoder_model = 'pass'
+        encoder_args = []
+        predictor_model = "mlp"
+        layers = [2*4096, 1000, 300, 1]
+        drops = [0.1, 0.1, 0.1]
+        wrapper = STSWrapper('SKRT', saved_models_path, emb_dim, vocab, encoder_model, encoder_args, predictor_model, layers, drops, train_di, test_di, test_di)
+        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=6e-4, betas=(0.9, 0.999), weight_decay=5e-3)
+        loss_func = nn.MSELoss()
+        train_losses, val_losses, correlations = wrapper.train(loss_func, opt_func)
+        assert(False)
+
+    
         if args.subtask == "train":
             train_di, val_di, test_di = get_sts_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
             loss_func = nn.MSELoss()
@@ -307,204 +550,8 @@ if __name__ == "__main__":
 
 
 
-    elif args.task == "infersent":
-        intents = pickle.load(Path('./data/chat_ic/intents.pkl').open('rb'))
-        C = len(intents)
-        TEXT = data.Field(sequential=True, use_vocab=False) # REMEMBER TO CHANGE THIS BACK IF I NEED TO.
-        LABEL = data.LabelField(dtype=torch.int, use_vocab=False)
-        BS = 128
-        FRAC = args.frac
-        LR = 6e-4
-        layers = [300, 100, C]
-        drops = [0, 0]
-
-        import nltk
-        from pretrained_models.infersent.models import InferSent
-        params_model = {'bsize': 64, 'word_emb_dim': 300, 'enc_lstm_dim': 2048,
-                        'pool_type': 'max', 'dpout_model': 0.0, 'version': 1}
-        model = InferSent(params_model)
-        model.load_state_dict(torch.load('./pretrained_models/infersent/infersent1.pkl'))
-        model.set_w2v_path('./data/glove.840B.300d.txt')
-        
-        # build vocab
-        train_ds, val_ds, test_ds = IntentClassificationDataReader('./data/chat_ic/', '_tknsd.pkl', TEXT, LABEL).read()
-        sentences = [' '.join(eg.x) for eg in train_ds.examples]
-        model.build_vocab(sentences, tokenize=False)
-
-        # print(model.word_vec.keys())
-        # I'll have to build a vocab here to satisfy Torchtext, and then use itos to convert from the
-        # integers to the words before passing into InferSent?? this sounds like a massive pain in the ass...
-        # but seems like it might be the best way... i.e. the model itself has a 'vocab' which is really just
-        # its word2vec, and then TEXT also has a VOCAB that's used to create the iterator of the right size etc. etc.
-        # I could try using a normal iterator (i.e. not bucket, setting the sort key param)???
-        # try this before implementing the massive redundant thing
-
-        # train
-        train_di, val_di, test_di = get_ic_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
-        print(next(iter(train_di)))
-        print(next(iter(val_di)))
-        print(next(iter(test_di)))
-        # need to see if this is still text tokens rather than token indices... we don't want TEXT to create a vocab here.
-        assert(False)
-        loss_func = nn.CrossEntropyLoss()
-        wrapper = IntentWrapper(args.model_name, f'{args.saved_models}/chat_ic', 300, model, args.encoder_model, train_di, val_di, test_di, layers=layers, drops=drops)
-        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=0)
-        train_losses, val_losses = wrapper.train(loss_func, opt_func)
 
 
-    elif args.task == "train_sts_benchmark":
-        # import pandas as pd
-        # df = pd.read_csv('./data/stsbenchmark/sts-train.csv', index_col=None, sep='\t', header=None, names=['to_delete', 'to_delete', 'to_delete', 'id', 'similarity', 's1', 's2'])
-        # df = df.drop(columns=['to_delete', 'to_delete.1', 'to_delete.2', 'id'])
-        # df.drop_duplicates()
-        # df.reset_index(drop=True)
-        # df = df[pd.notnull(df['s2'])]
-
-        # import csv
-        # test_data = []
-        # with open('./data/stsbenchmark/sts-test.csv', 'r') as f:
-        #     csv_reader = csv.reader(f)
-        #     for r in csv_reader:
-        #         row = list(filter(None, r))
-        #         if len(row) == 1:
-        #             test_data.append(row[0].split('\t'))``
-        #         else:
-        #             test_data.append(''.join(row).split('\t'))
-        # test_data = [r[4:7] for r in test_data]
-
-        # sentences = []
-        # for row in df.iterrows():
-        #     sentences += [row[1]['s1'], row[1]['s2']]
-        # for row in test_data:
-        #     sentences += [row[1], row[2]]
-        # pickle.dump(sentences, Path('./data/stsbenchmark/sentences.pkl').open('wb'))
-
-        # import nltk
-        # from pretrained_models.infersent.models import InferSent
-        # params_model = {'bsize': 64, 'word_emb_dim': 300, 'enc_lstm_dim': 2048,
-        #                 'pool_type': 'max', 'dpout_model': 0.0, 'version': 1}
-        # model = InferSent(params_model)
-        # model.load_state_dict(torch.load('infersent1.pkl'))
-        # model.set_w2v_path('./data/glove.840B.300d.txt')
-        # model.build_vocab(sentences, tokenize=True)
-        # embeddings = model.encode(sentences, bsize=128, tokenize=False, verbose=True)
-        # pickle.dump(embeddings, Path('./data/stsbenchmark/embeddings.pkl').open('wb'))
-
-        # sentences = pickle.load(Path('./data/stsbenchmark/sentences.pkl').open('rb'))
-        # embeddings = pickle.load(Path('./data/stsbenchmark/embeddings.pkl').open('rb'))
-        # s_enc_map = {}
-        # for i, s in enumerate(sentences):
-        #     if s not in s_enc_map:
-        #         s_enc_map[s] = embeddings[i]
-        # pickle.dump(s_enc_map, Path('./data/stsbenchmark/encoding_map.pkl').open('wb'))
-        
-        # enc = pickle.load(Path('./data/stsbenchmark/encoding_map.pkl').open('rb'))
-        # train_data = []
-        # for x in df.iterrows():
-        #     train_data.append([enc[x[1]['s1']], enc[x[1]['s2']], [float(x[1]['similarity'])]])
-        # pickle.dump(np.array(train_data), Path('./data/stsbenchmark/train_infersent.pkl').open('wb'))
-        # test_data = np.array([[enc[x[1]], enc[x[2]], [float(x[0])]] for x in test_data])
-        # pickle.dump(test_data, Path('./data/stsbenchmark/test_infersent.pkl').open('wb'))
-
-        # train_data_1 = pickle.load(Path('./data/stsbenchmark/train_infersent.pkl').open('rb'))
-        # train_data_2 = pickle.load(Path('./data/sick/train_infersent_2.pkl').open('rb'))
-        # train_data = np.concatenate([train_data_1, train_data_2])
-        # pickle.dump(train_data, Path('./data/sts_train_all.pkl').open('wb'))
-        # test_data_1 = pickle.load(Path('./data/stsbenchmark/test_infersent.pkl').open('rb'))
-        # test_data_2 = pickle.load(Path('./data/sick/test_infersent_2.pkl').open('rb'))
-        # test_data = np.concatenate([test_data_1, test_data_2])
-        # pickle.dump(test_data, Path('./data/sts_test_all.pkl').open('wb'))
-
-        # train_di = STSDataIterator('./data/stsbenchmark/train_infersent.pkl', batch_size=50, randomise=True)
-        # test_di = STSDataIterator('./data/stsbenchmark/test_infersent.pkl', randomise=False)
-        # train_di = STSDataIterator('./data/sts_train_all.pkl', batch_size=50, randomise=True)
-        # test_di = STSDataIterator('./data/sts_test_all.pkl', randomise=False)
-        train_di = STSDataIterator('./data/sick/train_infersent_2.pkl', batch_size=50, randomise=True)
-        test_di = STSDataIterator('./data/sick/test_infersent_2.pkl', randomise=False)
-        layers, drops = [2*4096, 1024, 1], [0.3, 0]
-        predictor = STSWrapper(args.model_name, args.saved_models, train_di, test_di, "pretrained", layers=layers, drops=drops)
-        loss_func = nn.MSELoss()
-        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=args.lr, weight_decay=0, amsgrad=False)
-        # opt_func = torch.optim.Adam(predictor.model.parameters(), lr=0.01, weight_decay=0, amsgrad=False)
-        opt_func = torch.optim.SGD(predictor.model.parameters(), lr=0.01)
-        train_losses, test_losses = predictor.train(loss_func, opt_func, 50)
-
-
-
-
-    elif args.task == "train_sts_sick":
-
-        # sentences = []
-        # for s1,s2,_ in train_data_raw:
-        #     sentences.append(s1)
-        #     sentences.append(s2)
-        # for s1,s2,_ in test_data_raw:
-        #     sentences.append(s1)
-        #     sentences.append(s2)
-        # pickle.dump(sentences, Path('sentences.pkl').open('wb'))
-
-        # import nltk
-        # from pretrained_models.infersent.models import InferSent
-        # params_model = {'bsize': 64, 'word_emb_dim': 300, 'enc_lstm_dim': 2048,
-        #                 'pool_type': 'max', 'dpout_model': 0.0, 'version': 1}
-        # model = InferSent(params_model)
-        # model.load_state_dict(torch.load('infersent1.pkl'))
-        # model.set_w2v_path('./data/glove.840B.300d.txt')
-        # model.build_vocab(sentences, tokenize=True)
-        # embeddings = model.encode(sentences, bsize=128, tokenize=False, verbose=True)
-        
-        # pickle.dump(sentences, Path('9k_sentences.pkl').open('wb'))
-        # pickle.dump(embeddings, Path('embeddings.pkl').open('wb'))
-        
-
-        # sentences = pickle.load(Path('sentences.pkl').open('rb'))
-        # embeddings = pickle.load(Path('embeddings.pkl').open('rb'))
-        # s_enc_map = {}
-        # for i, s in enumerate(sentences):
-        #     if s not in s_enc_map:
-        #         s_enc_map[s] = embeddings[i]
-        # pickle.dump(s_enc_map, Path('encoding_map.pkl').open('wb'))
-        
-        # encoding_map = pickle.load(Path('encoding_map.pkl').open('rb'))
-
-
-        train_di = STSDataIterator('./data/sts/sick/train_infersent_2.pkl', batch_size=64, randomise=True)
-        test_di = STSDataIterator('./data/sts/sick/test_infersent_2.pkl', randomise=False)
-        layers, drops = [2*4096, 512, 1], [0, 0, 0]
-        wrapper = STSWrapper(args.model_name, args.saved_models, train_di, test_di, "pretrained", predictor_model="nn", layers=layers, drops=drops)
-        loss_func = nn.MSELoss()
-        opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=6e-4, weight_decay=0, amsgrad=False)
-        train_losses, test_losses = wrapper.train(loss_func, opt_func, 50)
-
-
-    elif args.task == "elmo":
-        
-        sentences = ['hey my name is Nick and I have a penis']
-        
-        # from mosestokenizer import MosesTokenizer, MosesDetokenizer
-        # tokeniser = MosesTokenizer()
-        # tknzd = tokeniser(sentences[0])
-        # tokeniser.close()
-        # print(tknzd)
-        
-        import spacy
-        nlp = spacy.load('en')
-        tknzd = [[t.text for t in nlp(s)] for s in sentences]
-
-        from allennlp.commands.elmo import ElmoEmbedder
-        from allennlp.modules.elmo import Elmo, batch_to_ids
-        options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
-        weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
-        
-        # elmo = ElmoEmbedder(options_file, weight_file)
-        # embeddings = elmo.embed_sentence(tknzd[0])
-        # print(embeddings.shape)
-
-        elmo = Elmo(options_file, weight_file, 1, dropout=0)
-        character_ids = batch_to_ids(tknzd)
-        embeddings = elmo(character_ids)
-        print(embeddings['elmo_representations'][0].shape)
-        # assuming I do one sentence at a time, this gives [seq_len, 1024] and then I can pool over these?
 
     elif args.task == "worst_predictions":
         predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, train_di, test_di, args.encoder_model, layers=layers, drops=drops)
