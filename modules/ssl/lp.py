@@ -4,44 +4,8 @@ import warnings
 from scipy import spatial
 from scipy.stats import entropy
 
-from modules.models import create_sts_predictor
-from modules.utilities import euclid
-
 from modules.utilities.imports import *
 from modules.utilities.imports_torch import *
-
-
-def get_sts_model(source):
-    vocab = pickle.load(Path(f'./data/sts/{source}/pretrained/vocab.pkl').open('rb'))
-    params = pickle.load(Path(f'./data/sts/{source}/pretrained/params.pkl').open('rb'))
-    enc_params, pred_params = params['encoder'], params['predictor']
-    emb_dim, hid_dim = enc_params['emb_dim'], enc_params['hid_dim']
-    num_layers, output_type = enc_params['num_layers'], enc_params['output_type']
-    bidir, fine_tune = enc_params['bidir'], enc_params['fine_tune']
-    layers, drops = pred_params['layers'], pred_params['drops']
-    enc_args = [hid_dim, num_layers, bidir, fine_tune, output_type]
-    model = create_sts_predictor(vocab, emb_dim, 'lstm', 'mlp', layers, drops, *enc_args)
-    model.load_state_dict(torch.load(f'./data/sts/{source}/pretrained/weights.pt', map_location=lambda storage, loc: storage))
-    model.eval()
-    
-    return model
-
-
-def sts_dist(model, u, v):
-    u, v = torch.tensor([u]), torch.tensor([v])
-    diff = (u-v).abs()
-    mult = u * v
-    x = torch.cat((diff, mult), 1)
-    for l in model.layers:
-        l_x = l(x)
-        x = F.relu(l_x)
-    sim = l_x.item()
-    if sim <= 0:
-        sim = 0.01
-    return 1 - (sim/5)
-
-
-MODEL = None
 
 
 class LabelProp():
@@ -51,34 +15,41 @@ class LabelProp():
         x_l (list(emb)): labeled data in embedded space
         y_l (list(int)): labels for labeled data
         x_u (list(emb)): unlabeled data in embedded space
-        sigma (float): parameter controlling edge-weighting
-        sim_measure (str): cosine | sts
-        source (str): source of STS model for sts sim (sick|stsbenchmark|both)
+        data_source (str): dataset
+        display (bool): whether to print progress (for larger datasets).
     """
-    def __init__(self, x_l, y_l, x_u, nc, sigma=None, sim_measure='cosine', source=None):
-        if sim_measure == "sts":
-            global MODEL
-            if MODEL is None:
-                MODEL = get_sts_model(source)
-        self.sim_measure = sim_measure
-
+    def __init__(self, x_l, y_l, x_u, y_u, nc, data_source='chatbot', display=False):
+        st = time.time()
+        self.data_source = data_source
         self.nl, self.nu, self.n, self.nc = len(x_l), len(x_u), len(x_l)+len(x_u), nc
-        # self.sigma = sigma if sigma is not None else self._mst_heuristic_sigma(x_l,y_l)
-        # print(self.sigma)
-        self.sigma = 0.09
-        self._initialise(x_l, y_l, x_u, self.sigma)
 
-    def _initialise(self, x_l, y_l, x_u, sigma, epsilon=0):
-        """
-        Initialises transition and label matrices.
-        Args:
-            x_l, y_l (list): encoded sentences and corresponding labels
-            x_u (list): encoded sentences from unlabeled data
-            sigma (float): Sigma parameter to use in weighting
-        Returns:
-            None (creates class variables)
-        """
-        self.ss = math.pow(sigma, 2) # used in weighting function
+        # calculate sigma
+        sigma, T_ll = self._mst_heuristic_sigma(x_l, y_l)
+        sigma = 0.12
+        self.ss = math.pow(sigma, 2)
+        if display: print('1) computed sigma')
+
+        # initialise T
+        self.T = np.zeros((self.n, self.n), dtype=np.float)
+        self.T[:self.nl,:self.nl] = T_ll
+        if display: print('2.1) computed T_ll')
+        T_lu = spatial.distance.cdist(x_l, x_u)
+        self.T[:self.nl,self.nl:] = T_lu
+        if display: print('2.2) computed T_lu')
+        T_ul = np.transpose(T_lu)
+        self.T[self.nl:,:self.nl] = T_ul
+        if display: print('2.3) computed T_ul')
+        T_uu = spatial.distance.cdist(x_u, x_u)
+        self.T[self.nl:,self.nl:] = T_uu
+        if display: print('2.4) computed T_uu')
+        self.T = np.exp(-self.T/self.ss) # weighting function
+        self.T /= self.T.sum(axis=0)[np.newaxis,:] # column norm
+        self.T /= self.T.sum(axis=1)[:,np.newaxis] # row norm
+        if display: print('3) initialised T')
+
+        # # epsilon-interpolation smoothing w uniform transition matrix (MAYBE I'M NOT DOING THIS CORRECTLY SINCE WE CAN'T GET V GOOD RESULTS USING SIGMA-SETTING THING)
+        # U = float(1/self.n) * np.ones((self.n, self.n), dtype=np.float)
+        # self.T = epsilon * U + (1 - epsilon) * self.T
 
         # initialise Y
         self.Y = np.zeros((self.n, self.nc), dtype=np.float)
@@ -86,19 +57,8 @@ class LabelProp():
             for j in range(self.nc):
                 self.Y[i,j] = 1 if j == y_l[i] else 0
         self.Y_static = self.Y[:self.nl]
-
-        # initialise T (better)
-        st = time.time()
-        X = np.concatenate([x_l,x_u], axis=0)
-        self.T = spatial.distance.cdist(X,X) # euclid_distance matrix
-        self.T = np.exp(-self.T/self.ss) # weighting function
-        self.T /= self.T.sum(axis=0)[np.newaxis,:] # column norm
-        self.T /= self.T.sum(axis=1)[:,np.newaxis] # row norm
-        print(f'initialised T in {time.time()-st} seconds')
-
-        # # epsilon-interpolation smoothing w uniform transition matrix
-        # U = float(1/self.n) * np.ones((self.n, self.n), dtype=np.float)
-        # self.T = epsilon * U + (1 - epsilon) * self.T
+        if display: print('4) initialised Y')
+        if display: print(f'5) completed initialisation in {time.time()-st} seconds')
 
     def _mst_heuristic_sigma(self, x_l, y_l):
         """
@@ -119,7 +79,7 @@ class LabelProp():
                 if y_l[i] != y_l[j] and dist > 0 and dist < min_dist:
                     min_dist = dist
             
-        return min_dist / 3
+        return min_dist / 3 , D
     
     def sigma_fit(self, x_l, y_l, x_u, y_u):
         """
@@ -171,9 +131,13 @@ class LabelProp():
         Returns:
             None (updates label matrix).
         """
-        tol = 0.1 # for TREC
+        if self.data_source == 'trec':
+            tol = 0.1
+        elif self.data_source == 'chat':
+            tol = 0.001
+            
         Y_prev = np.zeros((self.n, self.nc), dtype=np.float)
-        for i in tqdm(range(max_iter), total=max_iter):
+        for i in range(max_iter):
             if np.abs(self.Y-Y_prev).sum() < tol: break
             Y_prev = self.Y
             self.Y = np.matmul(self.T, self.Y) # Y <- TY
@@ -199,11 +163,10 @@ class LabelProp():
         xl, yl, xu, yu = x_l, y_l, x_u, y_u
         all_classifications, all_indices = [], []
         last_unlabeled_count = len(x_u)
-
         iters = 0
+
         while True:
             iters += 1
-            self.__init__(xl, yl, xu, self.nc)
             self.propagate(tol, max_iter)
             classifications, indices = self.classify(threshold=True)
 
@@ -222,6 +185,7 @@ class LabelProp():
             if last_unlabeled_count - len(xu) == 0 or len(xu) == 0:
                 break
             last_unlabeled_count = len(xu)
+            self.__init__(xl, yl, xu, yu, self.nc) # last in loop because we have to init before calling recursive
         
         return all_classifications, all_indices
     
@@ -283,10 +247,9 @@ class LabelProp():
             Predicted classes, and indices of the data labeled with those
                 classes (if we use threshold, not all unlabeled data are used).
         """
+        Yu = self.Y[self.nl:]
         if threshold:
-            THRESH = 0.99
-            Yu = self.Y[self.nl:]
-            indices = np.squeeze(np.argwhere(np.max(Yu, axis=1) >= THRESH), axis=1)
+            indices = np.squeeze(np.argwhere(np.max(Yu, axis=1) >= 0.99), axis=1)
             preds = np.argmax(Yu[indices,:], axis=1)
         else:
             indices = [i for i in range(self.nu)]
