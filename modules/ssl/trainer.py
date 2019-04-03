@@ -1,3 +1,4 @@
+from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import ParameterGrid
 from torchtext import data
 from torchtext.data.example import Example
@@ -18,7 +19,7 @@ from .knn import knn_classify
 __all__ = ['repeat_augment_and_train']
 
 
-def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source, aug_algo, encoder_model, sim_measure, datasets, text_field, label_field, frac, num_classes, classifier_params, k=10):
+def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source, aug_algo, encoder_model, sim_measure, datasets, text_field, label_field, frac, num_classes, classifier_params, k, learning_type):
     """
     Runs k trials of augmentation & repeat-classification for a given fraction of labeled training data.
     Args:
@@ -32,6 +33,7 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
         frac (float): Fraction of labeled training data to use
         classifier_params (dict): params for intent classifier to use on augmented data.
         k (int): Number of times to repeat augmentation-classifier training process
+        learning_type (str): inductive|transductive
     Returns:
         8 statistical measures of the results of these trials
     """
@@ -39,19 +41,14 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
     class_accs, aug_accs, aug_fracs = [], [], []
     ps, rs, fs = [], [], []
 
-    if sim_measure == "sts":
-        k = 10 if encoder_model == "sts_sick" else 20
-    elif data_source == "chatbot" and aug_algo.startswith("lp"):
-        k = 40
-    else:
-        k = 200
-
     for i in tqdm(range(k), total=k):
         examples = train_ds.examples
         np.random.shuffle(examples)
         cutoff = int(frac*len(examples))
-
-        if frac == 0: # 1 labeled eg from each class
+        if learning_type == "transductive":
+            labeled_examples = train_ds.examples
+            unlabeled_examples = test_ds.examples
+        elif frac == 0: # 1 labeled eg from each class
             classes_seen = {i: 0 for i in range(num_classes)}
             labeled_examples, unlabeled_examples = [], []
             for eg in examples:
@@ -74,27 +71,33 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
             new_labeled_data = [{'x': x, 'y': y} for x,y in zip(augmented_x_l, augmented_y_l)]
             augmented_train_examples = [Example.fromdict(x, {'x': ('x', text_field), 'y': ('y', label_field)}) for x in new_labeled_data]
             aug_acc = 1; frac_used = 0
-        elif aug_algo == "none" or frac == 1:
+        elif aug_algo == "none":
             augmented_train_examples = labeled_examples
             aug_acc = 1; frac_used = 0
         elif aug_algo == "self_feed":
-            sf_thresh = 0.995
+            sf_thresh = 0.7
             augmented_train_examples, aug_acc, frac_used = self_feed(data_source, dir_to_save, iter_func, model_wrapper, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params, thresh=sf_thresh)
         else:
-            augmented_train_examples, aug_acc, frac_used = augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, text_field, label_field, num_classes)
+            augmented_train_examples, aug_acc, frac_used = augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, test_ds, text_field, label_field, num_classes)
         
         aug_accs.append(aug_acc); aug_fracs.append(frac_used)
         new_train_ds = data.Dataset(augmented_train_examples, {'x': text_field, 'y': label_field})
         new_datasets = (new_train_ds, val_ds, test_ds)
 
-        if data_source in ('chatbot', 'webapps', 'askubuntu'):
-            acc, p, r, f = do_basic_train_and_classify(new_train_ds, test_ds, classifier_params)
-        else:
-            acc, p, r, f = train_ic(dir_to_save, iter_func, model_wrapper, text_field, label_field, new_datasets, classifier_params, return_statistics=True)
+        if learning_type == "inductive":
+            acc, p, r, f = do_basic_train_and_classify(new_train_ds, test_ds, classifier_params, data_source)
+        else: # transductive
+            predictions = [eg.y for eg in augmented_train_examples[len(train_ds.examples):]]
+            test_Y = [eg.y for eg in test_ds.examples]
+            acc = accuracy_score(predictions, test_Y)
+            avg = "macro avg" if data_source == "chat" else "weighted avg"
+            report = classification_report(predictions, test_Y, output_dict=True)[avg]
+            p, r, f = report['precision'], report['recall'], report['f1-score']
+        
         class_accs.append(acc); ps.append(p); rs.append(r); fs.append(f)
 
     print(f"FRAC '{frac}' Results Below:")
-    print(f'classification acc --> mean: {np.mean(class_accs)}, std: {np.std(class_accs)}')
+    print(f'classification acc --> mean: {np.mean(class_accs)}; std: {np.std(class_accs)}')
     print(f'augmentation acc --> mean: {np.mean(aug_accs)}; std: {np.std(aug_accs)}\t (average frac used: {np.mean(aug_fracs)})')
     print(f'p/r/f1 means --> precision mean: {np.mean(ps)}; recall mean: {np.mean(rs)}; f1 mean: {np.mean(fs)}')
     print(f'p/r/f1 stds --> precision std: {np.std(ps)}; recall std: {np.std(rs)}; f1 std: {np.std(fs)}')
@@ -107,8 +110,8 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
     return class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, aug_frac_mean, p_mean, p_std, r_mean, r_std, f_mean, f_std
 
 
-def augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, text_field, label_field, num_classes):
-    res = encode_data_with_pretrained(data_source, train_ds, text_field, encoder_model, labeled_examples, unlabeled_examples)
+def augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, test_ds, text_field, label_field, num_classes):
+    res = encode_data_with_pretrained(data_source, train_ds, test_ds, text_field, encoder_model, labeled_examples, unlabeled_examples)
     xs_l, ys_l, xs_u, ys_u, xs_u_unencoded = res
 
     if aug_algo.startswith("knn"):
@@ -126,12 +129,8 @@ def augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples,
         frac_used = 1
     elif aug_algo.startswith("lp"):
         algo_version = aug_algo.split('_')[1]
-        lp = LabelProp(xs_l, ys_l, xs_u, num_classes, sim_measure=sim_measure, source=encoder_model.split('_')[1])
-
-        # TO FIND SIGMA VALUES... THE EPSILON STUFF STILL ISN'T REALLY WORKING FOR ME.
-        # lp.sigma_fit(xs_l, ys_l, xs_u, ys_u)
-        # assert(False)
-
+        display = True if data_source == "trec" else False
+        lp = LabelProp(xs_l, ys_l, xs_u, ys_u, num_classes, data_source=data_source, display=display)
         if algo_version == 'base':
             lp.propagate()
             classifications, indices = lp.classify(threshold=False)
