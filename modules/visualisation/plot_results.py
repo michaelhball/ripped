@@ -26,14 +26,18 @@ def plot_one_statistic(methods, data_source, classifier, get_results, plot_type=
         bline_means = bline_res[f'{to_plot}_means']
         bline_cis = [confidence_interval(0.95, std, bline_res['n']) for std in bline_res[f'{to_plot}_stds']]
         if plot_type == "embeddings":
-            plt.errorbar(fracs, bline_means, yerr=bline_cis, fmt='C0.-', ecolor='C0', elinewidth=0.8, capsize=1, label=f'fully-supervised')
+            if data_source == "chat":
+                fracs = fracs[-5:]; bline_means = bline_means[-5:]; bline_cis = bline_cis[-5:]
+            plt.errorbar(fracs, bline_means, yerr=bline_cis, fmt='C0o-', ecolor='C0', elinewidth=1, capsize=1, linewidth=2, label=f'supervised')
 
         # plot all other methods
         for idx, (name, v) in enumerate(methods.items()):
             res = get_results(v['encoder'], data_source, classifier, algorithm=v['algorithm'])
             means = [bline_means[0]] + res[f'{to_plot}_means']
             cis = [bline_cis[0]] + [confidence_interval(0.95, std, res['n']) for std in res[f'{to_plot}_stds']]
-            plt.errorbar(fracs, means, yerr=cis, fmt=f'C{idx+1}.-', ecolor=f'C{idx+1}', elinewidth=0.8, capsize=1, label=f'{name}')
+            if data_source == "chat":
+                means = means[-5:]; cis = cis[-5:]
+            plt.errorbar(fracs, means, yerr=cis, fmt=f'C{idx+1}o-', ecolor=f'C{idx+1}', elinewidth=1, capsize=1, linewidth=2, label=f'{name}')
 
         plt.title(title)
         plt.ylabel(to_plot)
