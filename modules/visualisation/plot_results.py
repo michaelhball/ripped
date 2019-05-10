@@ -20,6 +20,10 @@ def plot_one_statistic(methods, data_source, classifier, get_results, plot_type=
         None
     """
     with plt.style.context('seaborn-whitegrid'):
+        plt.rcParams['font.family'] = 'serif'
+        plt.rcParams['mathtext.fontset'] = 'dejavuserif'
+        fig, ax = plt.subplots()
+
         # plot baseline
         bline_res = get_results('supervised', data_source, classifier)
         fracs = bline_res['fracs']
@@ -28,7 +32,7 @@ def plot_one_statistic(methods, data_source, classifier, get_results, plot_type=
         if plot_type == "embeddings":
             if data_source == "chat":
                 fracs = fracs[-5:]; bline_means = bline_means[-5:]; bline_cis = bline_cis[-5:]
-            plt.errorbar(fracs, bline_means, yerr=bline_cis, fmt='C0o-', ecolor='C0', elinewidth=1, capsize=1, linewidth=2, label=f'supervised')
+            ax.errorbar(fracs, bline_means, yerr=bline_cis, fmt='C0o-', ecolor='C0', elinewidth=1, capsize=1, linewidth=2, label=f'supervised')
 
         # plot all other methods
         for idx, (name, v) in enumerate(methods.items()):
@@ -37,11 +41,13 @@ def plot_one_statistic(methods, data_source, classifier, get_results, plot_type=
             cis = [bline_cis[0]] + [confidence_interval(0.95, std, res['n']) for std in res[f'{to_plot}_stds']]
             if data_source == "chat":
                 means = means[-5:]; cis = cis[-5:]
-            plt.errorbar(fracs, means, yerr=cis, fmt=f'C{idx+1}o-', ecolor=f'C{idx+1}', elinewidth=1, capsize=1, linewidth=2, label=f'{name}')
+            ax.errorbar(fracs, means, yerr=cis, fmt=f'C{idx+1}o-', ecolor=f'C{idx+1}', elinewidth=1, capsize=1, linewidth=2, label=f'{name}')
 
-        plt.title(title)
-        plt.ylabel(to_plot)
-        plt.xlabel('fraction of labeled data')
-        plt.legend()
-        plt.grid(b=True)
+        ax.set_title(title)
+        ax.set_ylabel(to_plot)
+        ax.set_xlabel('fraction of training data used as labeled examples')
+        ax.grid(b=True)
+        fig.set_size_inches(15, 10)
+        plt.legend(loc='lower right', frameon=True, fancybox=True, shadow=True, fontsize='large')
+        plt.savefig(f'./paper/lp-r_per_embedding_{data_source}1.pdf', format='pdf', dpi=100)
         plt.show()

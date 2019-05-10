@@ -12,12 +12,7 @@ __all__ = ['visualise_data']
 
 def visualise_data(data_source, encoder_model, datasets, intents, text_field, type_='pca', show=True):
     train_ds, val_ds, test_ds = datasets
-    if encoder_model.startswith('pretrained'):
-        embedding_type = encoder_model.split('_')[1]
-    elif encoder_model.startswith('sts'):
-        embedding_type = encoder_model
-
-    X, Y, *_ = encode_data_with_pretrained(data_source, train_ds, test_ds, text_field, embedding_type, train_ds.examples + test_ds.examples, [])
+    X, Y, *_ = encode_data_with_pretrained(data_source, train_ds, test_ds, text_field, encoder_model, train_ds.examples + test_ds.examples, [])
 
     nc = len(set(Y))
     intent_embeddings = {i: [] for i in range(nc)}
@@ -52,12 +47,59 @@ def visualise_data(data_source, encoder_model, datasets, intents, text_field, ty
  
     elif type_ == "pca+tsne":
         n_components = {'webapps': 30, 'chatbot': 50, 'askubuntu': 50, 'chat': 100}[data_source]
+
+        # make 4-part plot
+        with plt.style.context('seaborn-whitegrid'):
+
+            plt.rcParams['font.family'] = 'serif'
+            plt.rcParams['mathtext.fontset'] = 'dejavuserif'
+
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
+            axes = {"pretrained_elmo": ax1, "pretrained_glove": ax2, "sts_stsbenchmark": ax3, "sts_sick": ax4}
+            model_names = {"pretrained_elmo": "ELMo", "pretrained_glove": "GloVe", 'sts_sick': "STS-sick", "sts_stsbenchmark": "STS-bench"}
+
+            for embedding_model in ("pretrained_elmo", "pretrained_glove", "sts_stsbenchmark", "sts_sick"):
+                X, Y, *_ = encode_data_with_pretrained(data_source, train_ds, test_ds, text_field, embedding_model, train_ds.examples + test_ds.examples, [])
+                pca = PCA(n_components=n_components)
+                pca_res = pca.fit_transform(X)
+                tsne = TSNE(n_components=2, verbose=0, perplexity=30, n_iter=1000)
+                tsne_pca_res = tsne.fit_transform(pca_res)
+                ts1, ts2 = tsne_pca_res[:,0], tsne_pca_res[:,1]
+                df_tsne_pca = DataFrame([{
+                    'intent': intents[y],
+                    'x-tsne-pca': t1,
+                    'y-tsne-pca': t2,
+                    'label': str(idx)
+                } for idx, (y,t1,t2) in enumerate(zip(Y,ts1,ts2))])
+
+                axis = axes[embedding_model]
+                statistics = {}
+                for idx, intent in enumerate(set(df_tsne_pca['intent'].values)):
+                    values = [v[1:] for v in df_tsne_pca.loc[df_tsne_pca['intent']==intent].drop(columns=['intent']).values]
+                    mean = np.mean(values, axis=0); var = np.var(values, axis=0)
+                    statistics[intent] = (mean, var, f'C{idx}')
+                    axis.scatter([v[0] for v in values], [v[1] for v in values], color=f'C{idx}', s=100, label=intent, alpha=0.4)
+                    axis.add_patch(Ellipse(mean, var[0], var[1], fill=False, edgecolor=f'C{idx}', linewidth=2))
+                    axis.set_title(model_names[embedding_model])
+
+                for intent, stats in statistics.items():
+                    axis.scatter([stats[0][0]], [stats[0][1]], color=stats[2], linewidth=3, s=500, marker='x')
+                    for intent2, stats2 in statistics.items():
+                        xs = [stats[0][0], stats2[0][0]]; ys = [stats[0][1], stats2[0][1]]
+                        axis.plot(xs, ys, 'black', alpha=0.5, linewidth=2)
+
+            handles, labels = ax4.get_legend_handles_labels()
+            fig.legend(handles, labels, loc='center')
+            fig.set_size_inches(15, 10)
+            plt.savefig('./paper/dataset_viz4.pdf', format='pdf', dpi=100)
+            plt.show()
+
+        assert(False)
+        
         pca = PCA(n_components=n_components)
         pca_res = pca.fit_transform(X)
-        # print(f'Cumulative explained variation for {n_components} principal components: {np.sum(pca.explained_variance_ratio_)}')
         tsne = TSNE(n_components=2, verbose=0, perplexity=30, n_iter=1000)
         tsne_pca_res = tsne.fit_transform(pca_res)
-        # tsne_pca_res = tsne.fit_transform(X)
         ts1, ts2 = tsne_pca_res[:,0], tsne_pca_res[:,1]
         df_tsne_pca = DataFrame([{
             'intent': intents[y],
