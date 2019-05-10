@@ -4,6 +4,8 @@
 
 This repository contains the code used in writing my undergraduate [honors thesis](https://github.com/michaelhball/Recursive-Intent-Propagation-using-Pretrained-Embedding-Distances/blob/master/RIPPED_honors_thesis.pdf).
 
+Complete README Coming Soon...
+
 ## Dependencies
 
 ## Download datasets
