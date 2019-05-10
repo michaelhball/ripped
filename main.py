@@ -17,9 +17,9 @@ parser.add_argument('--task', type=str, default='train', help='task out of train
 parser.add_argument('--subtask', type=str, default='none', help='sub-task within whichever specified task')
 parser.add_argument('--saved_models', type=str, default='./models', help='directory to save/load models')
 parser.add_argument('--model_name', type=str, default='999', help='name of model to train')
-parser.add_argument('--encoder_model', type=str, default='pos_tree', help='encoder model for primary task')
+parser.add_argument('--encoder_model', type=str, default='pretrained_glove', help='encoder model for primary task')
 parser.add_argument('--frac', type=float, default=1, help='fraction of training data to use')
-parser.add_argument('--predictor_model', type=str, default='mlp', help='mlp / cosine_sim')
+parser.add_argument('--predictor_model', type=str, default='mlp', help='mlp | cosine_sim')
 parser.add_argument('--aug_algo', type=str, default='none', help='none|knn_all|my_lp|self_feed|')
 parser.add_argument('--sim_measure', type=str, default='cosine', help='cosine|sts')
 args = parser.parse_args()
@@ -41,8 +41,7 @@ def get_results(encoder, data_source, classifier, algorithm=None, similarity_mea
     from results.chatbot import results_chatbot
     from results.webapps import results_webapps
     from results.chat import results_chat
-    from results.trec import results_trec
-    r = {'chat': results_chat, 'askubuntu': results_askubuntu, 'chatbot': results_chatbot, 'webapps': results_webapps, 'trec': results_trec}
+    r = {'chat': results_chat, 'askubuntu': results_askubuntu, 'chatbot': results_chatbot, 'webapps': results_webapps}
 
     if encoder in ('supervised', 'self_feed'):
         results_name = f'{encoder}__{classifier}'
@@ -68,15 +67,14 @@ if __name__ == "__main__":
         C = len(intents)
 
         # outline params for classifier
-        classifier = 'sgd' if data_source in ('webapps', 'trec', 'chat') else 'nb'
+        classifier = 'sgd' if data_source in ('webapps', 'chat') else 'nb'
         class_args = {
             'askubuntu': {'alpha': 1},
             'chatbot': {'alpha': 0.1},
             'webapps': {'loss': 'hinge', 'penalty': 'l2', 'alpha': 1e-2, 'learning_rate': 'optimal'},
             'chat': {'loss': 'hinge', 'penalty': 'l2', 'alpha': 1e-4, 'learning_rate': 'optimal'},
-            'trec': {'loss': 'hinge', 'penalty': 'l2', 'alpha': 1e-4, 'learning_rate': 'optimal'}
         }[data_source]
-        ngram_range = (2,5) if data_source in ('trec', 'chat') else (2,3)
+        ngram_range = (2,5) if data_source == "chat" else (2,3)
         classifier_params = {
             'vectoriser': 'count',
             'transformer': 'tfidf',
@@ -96,8 +94,6 @@ if __name__ == "__main__":
         # dim-reduced dataset visualisation
         if args.subtask == "dim_reduce":
             visualise_data(data_source, args.encoder_model, (train_ds, val_ds, test_ds), intents, TEXT, type_='pca+tsne', show=True)
-            # for encoder in ('pretrained_glove', 'pretrained_elmo', 'pretrained_bert', 'pretrained_infersent', 'sts_sick', 'sts_stsbenchmark', 'sts_both'):
-            #     visualise_data(data_source, encoder, (train_ds, val_ds, test_ds), intents, TEXT, type_='pca+tsne', show=True)
             assert(False)
 
         # parameters to collect
@@ -117,22 +113,17 @@ if __name__ == "__main__":
         if aug_algo == 'none':
             fracs = [1] + fracs
 
-        # fracs = [0] # testing 1 eg from each class special case.
-        # fracs = [1]
-
         if learning_type == 'transductive':
             fracs = [1]
 
         K = 200
-        if data_source == "chatbot" and (aug_algo.startswith("lp") or aug_algo == "kmeans"):
+        if data_source == "chatbot" and (aug_algo.startswith("lp") or aug_algo in ("kmeans", "kmeans_recursive")):
             K = 40
         elif data_source == 'chat':
             K = 20 if aug_algo.startswith('knn') else 5
-        elif aug_algo == "kmeans":
+        elif aug_algo.startswith("kmeans"):
             K = 100
         
-        # K = 20
-
         for FRAC in fracs:
             statistics = repeat_augment_and_train(dir_to_save, get_ic_data_iterators, IntentWrapper, data_source, aug_algo, args.encoder_model, args.sim_measure,
                                         (train_ds, val_ds, test_ds), TEXT, LABEL, FRAC, C, classifier_params, k=K, learning_type=learning_type)
@@ -154,13 +145,14 @@ if __name__ == "__main__":
 
         if args.subtask == "algo_average":
 
-            method_names = {'self_feed': 'self-train', 'lp_base': 'lp-B', 'lp_threshold': 'lp-T', 'lp_recursive': 'lp-R', 'knn_base': 'knn-B', 'kmeans': 'kmeans-B'}
+            method_names = {'self_feed': 'self-train', 'lp_base': 'lp-B', 'lp_threshold': 'lp-T', 'lp_recursive': 'lp-R', 'knn_base': 'knn', 'kmeans': 'kmeans-B', 'kmeans_recursive': 'kmeans-R'}
 
             STAT = 'f1'
 
-            algos = ["lp_base", "lp_threshold", "lp_recursive", "knn_base", "kmeans"]
+            algos = ["lp_base", "lp_threshold", "lp_recursive", "knn_base", "kmeans", "kmeans_recursive"]
             methods = [method_names[a] for a in algos]
             encoders = ['glove', 'elmo', 'bert', 'infersent', 'sts_stsbenchmark', 'sts_both']
+            # encoders = ['glove', 'elmo', 'bert', 'infersent', 'sts_sick', 'sts_stsbenchmark', 'sts_both']
             data_sources = ["chatbot", 'webapps', 'askubuntu', 'chat']
             data = {}
             
@@ -220,55 +212,67 @@ if __name__ == "__main__":
                 if STAT == "aug_acc":
                     average_across_datasets[method]['aug_fracs'] /= len(data_sources)
 
+            # # area between f1 curves for each method averaged across embeddings
+            # y0 = data[data_source]["supervised"]['f1s']
+            # methods = methods[1:]
+            # if data_source == "chatbot":
+            #     methods.insert(1, "self-train")
+            # for method in methods:
+            #     y1 = data[data_source][method]['f1s']
+            #     area = np.trapz(np.array(y1)-np.array(y0), dx=1)
+            #     print(''); print(method); print(round(area*100, 2))
+
+
             import matplotlib.pyplot as plt
             from modules.utilities.math import confidence_interval
+
+            stat = {'p': 'precision', 'r': 'recall', 'f1': 'f1 score', 'aug_acc': 'augmentation accuracy'}[STAT]
+            ds_name = {'chatbot': 'Chatbot', 'askubuntu': "AskUbuntu", 'webapps': 'Webapps', 'chat': 'Sied'}[data_source]
+            
             with plt.style.context('seaborn-whitegrid'):
+                plt.rcParams['font.family'] = 'serif'
+                plt.rcParams['mathtext.fontset'] = 'dejavuserif'
 
-                stat = {'p': 'precision', 'r': 'recall', 'f1': 'f1 score', 'aug_acc': 'augmentation accuracy'}[STAT]
-
-                # # average for each method across all datasets
+                # # PER METHOD AVERAGED ACROSS DATASETS
                 # average_across_datasets['lp-R']['aug_fracs'][3] = 0.72
                 # fracs = [5, 4, 3, 2, 1]
-                # methods = methods[1:] # ignore supervised
+                # methods = methods[1:]
+
+                # fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
                 # for idx, method in enumerate(methods):
                 #     means = average_across_datasets[method][f'{STAT}s']
                 #     cis = [confidence_interval(0.95, std, 200) for std in average_across_datasets[method]['stds']]
-                #     plt.errorbar(fracs, means, yerr=cis, fmt=f'C{idx}o-', ecolor=f'C{idx}', elinewidth=1, capsize=1, label=f'{method}', linewidth=2)
-                #     # if STAT == "aug_acc" and method in ("lp-T", "lp-R"):
-                #     #     plt.plot(fracs, average_across_datasets[method]['aug_fracs'], f'C{idx}o:', linewidth=2, label=f'{method} frac used')
-                # plt.title(f'Augmentation accuracy & fraction of unlabeled data used for two LP variants')
-                # plt.xticks([1,2,3,4,5])
-                # plt.xlabel('fraction indices (1 = lowest fraction tested for each dataset)')
-                
+                #     eb = ax1.errorbar(fracs, means, yerr=cis, fmt=f'C{idx}o-', ecolor=f'C{idx}', elinewidth=1, capsize=1, label=f'{method}', linewidth=2)
+                # if STAT == "aug_acc":
+                #     for idx, method in enumerate(methods):
+                #         if method in ("lp-B", "lp-T", "lp-R"):
+                #             ax2.plot(fracs, average_across_datasets[method]['aug_fracs'], f'C{idx}o-', linewidth=2, label=f'{method}')
 
-                # area between f1 curves for each method averaged across embeddings
-                y0 = data[data_source]["supervised"]['f1s']
-                methods = methods[1:]
-                if data_source == "chatbot":
-                    methods.insert(1, "self-train")
-                for method in methods:
-                    y1 = data[data_source][method]['f1s']
-                    area = np.trapz(np.array(y1)-np.array(y0), dx=1)
-                    print(''); print(method); print(round(area*100, 2))
-
-
-                # # average for each method on a given dataset.
-                # if data_source == "chatbot":
-                #     methods.insert(1, "self-train")
-                # fracs = data[data_source]['supervised']['fracs']
-                # for idx, method in enumerate(methods):
-                #     means = data[data_source][method][f'{STAT}s']
-                #     cis = [confidence_interval(0.95, std, 200) for std in data[data_source][method]['stds']]
-                #     plt.errorbar(fracs, means, yerr=cis, fmt=f'C{idx}o-', ecolor=f'C{idx}', elinewidth=1, capsize=1, label=f'{method}', linewidth=2)
-                # plt.title(f"Sied: {stat} for each augmentation algorithm")
-                # plt.xlabel('fraction of labeled data')
-                
-
-
-                # plt.ylabel(f'{STAT}')
-                # plt.legend()
-                # plt.grid(b=True)
+                # ax1.set_xticks([1,2,3,4,5]); ax2.set_xticks([1,2,3,4,5])
+                # ax1.set_ylabel('augmentation accuracy'); ax2.set_ylabel('fraction of unlabeled data used')
+                # fig.set_size_inches(15, 10)
+                # handles, labels = ax1.get_legend_handles_labels()
+                # fig.legend(handles, labels, frameon=True, fancybox=True, shadow=True, fontsize='medium', loc='center', ncol=len(methods))
+                # plt.savefig('./paper/DOOTDOOT.pdf', format='pdf', dpi=100)
                 # plt.show()
+
+
+                # PER METHOD ON GIVEN DATASET
+                fig, ax = plt.subplots()
+                if data_source == "chatbot": methods.insert(1, "self-train")
+                fracs = data[data_source]['supervised']['fracs']
+                for idx, method in enumerate(methods):
+                    means = data[data_source][method][f'{STAT}s']
+                    cis = [confidence_interval(0.95, std, 200) for std in data[data_source][method]['stds']]
+                    ax.errorbar(fracs, means, yerr=cis, fmt=f'C{idx}o-', ecolor=f'C{idx}', elinewidth=1, capsize=1, label=f'{method}', linewidth=2)
+                ax.set_title(f"F1 for each augmentation method on the {ds_name} dataset")
+                ax.set_xlabel('fraction of training data used as labeled examples')
+                ax.set_ylabel(f'{stat}')
+                ax.grid(b=True)
+                fig.set_size_inches(15, 10)
+                plt.legend(loc='lower right', frameon=True, fancybox=True, shadow=True, fontsize='large')
+                plt.savefig(f'./paper/per_method_{data_source}.pdf', format='pdf', dpi=100)
+                plt.show()
 
             assert(False)
 
@@ -291,14 +295,6 @@ if __name__ == "__main__":
             print(algo)
             # if style == "excel":
             print('\n'.join([str(f1) for f1 in r_f1s]))
-            
-        if args.subtask == "emb_average":
-            # NEED TO IMPLEMENT THIS TOO...
-            pass
-
-                
-
-
 
         elif args.subtask.startswith("print"):
             style = args.subtask.split('_')[1]
@@ -310,6 +306,8 @@ if __name__ == "__main__":
                 print('\nsupervised\n' + ' & '.join([str(f1) for f1 in r_baseline_f1s])+'\n')
             elif style == "excel":
                 print('\nsupervised\n' + '\n'.join([str(f1) for f1 in r_baseline_f1s]))
+            elif style == "anova":
+                print(f'\t'.join([str(f1) for f1 in r_baseline_f1s[-5:]]))
             
             for encoder in encoders:
                 algorithm = args.aug_algo if encoder != 'self_feed' else None
@@ -324,14 +322,16 @@ if __name__ == "__main__":
                     print(' & '.join([str(p) for p in perc_diffs])+'\n')
                 elif style == "excel":
                     print(f'\n{encoder}\n' + '\n'.join([str(f1) for f1 in r_f1s]))
+                elif style == "anova":
+                    print(f'\t'.join([str(f1) for f1 in r_f1s[-5:]]))
 
         elif args.subtask == "calc_area":
-            y0 = get_results('supervised', data_source, classifier)['f1_means'][1:]
+            y0 = get_results('supervised', data_source, classifier)['f1_means'][-5:]
             encoders = ['glove', 'elmo', 'bert', 'infersent', 'sts_sick', 'sts_stsbenchmark', 'sts_both']
             if data_source == "chatbot": encoders.insert(0, 'self_feed')
             for encoder in encoders:
                 algorithm = args.aug_algo if encoder != 'self_feed' else None
-                y1 = get_results(encoder, data_source, classifier, algorithm=algorithm)['f1_means']
+                y1 = get_results(encoder, data_source, classifier, algorithm=algorithm)['f1_means'][-5:]
                 area = np.trapz(np.array(y1)-np.array(y0), dx=1)
                 print(''); print(encoder); print(round(area*100, 2))
 
@@ -339,10 +339,9 @@ if __name__ == "__main__":
             plot_type = 'embeddings'
             to_plot = 'f1'
             ds_name = {'chatbot': 'Chatbot', 'askubuntu': "AskUbuntu", 'webapps': 'Webapps', 'chat': 'Sied'}[data_source]
-            # title = f'{ds_name}: F1 scores for STS-bench encodings with different propagation methods'
-            title = f'{ds_name}: F1 using lp-R with each embedding model'
+            title = f'F1 using lp-R with each embedding type on the {ds_name} dataset'
             methods = {
-                "self-feed": {'algorithm': None, 'encoder': 'self_feed'},
+                "self-train": {'algorithm': None, 'encoder': 'self_feed'},
 
                 # ELMo
                 # "KNN-b": {"algorithm": 'knn_base', 'encoder': 'elmo'},
@@ -403,7 +402,7 @@ if __name__ == "__main__":
                 "ELMo": {'algorithm': 'lp_recursive', 'encoder': 'elmo'},
                 "BERT": {'algorithm': 'lp_recursive', 'encoder': 'bert'},
                 "InferSent": {'algorithm': 'lp_recursive', 'encoder': 'infersent'},
-                # "STS-sick": {'algorithm': 'lp_recursive', 'encoder': 'sts_sick'},
+                "STS-sick": {'algorithm': 'lp_recursive', 'encoder': 'sts_sick'},
                 "STS-bench": {'algorithm': 'lp_recursive', 'encoder': 'sts_stsbenchmark'},
                 "STS-both": {'algorithm': 'lp_recursive', 'encoder': 'sts_both'},
                 
@@ -417,9 +416,8 @@ if __name__ == "__main__":
                 # "STS-both": {"algorithm": "kmeans", 'encoder': 'sts_both'},
             }
             if plot_type != "embeddings" or data_source != "chatbot":
-                del methods['self-feed']
+                del methods['self-train']
             plot_one_statistic(methods, data_source, classifier, get_results, plot_type=plot_type, to_plot=to_plot, title=title)
-
 
     # INTENT CLASSIFICATION
     elif args.task.startswith("ic"):
@@ -465,41 +463,11 @@ if __name__ == "__main__":
             opt_func = torch.optim.Adam(wrapper.model.parameters(), lr=LR, betas=(0.7,0.999), weight_decay=0)
             train_losses, val_losses = wrapper.train(loss_func, opt_func)
 
-
-    # SEMANTIC TEXTUAL SIMILARITY
+    # SEMANTIC TEXTUAL SIMILARITY using InferSent
     elif args.task.startswith("sts"):
-        # C = 1
-        # BS = 128
-        # LR = 6e-4
-        # EMB_DIM = 300
-        # HID_DIM = 300
-        # layers = [2*EMB_DIM, 300, C]
-        # drops = [0, 0]
-        
         data_source = args.task.split('_')[1]
         saved_models_path = f'{args.saved_models}/sts/{data_source}'
-        # train_file = f'./data/sts/{data_source}/train_tknsd1.pkl' # './data/sts/both_train_tknsd.pkl' 
-        # train_file = './data/sts/both_train_tknsd.pkl'
-        # val_file = f'./data/sts/{data_source}/val_tknsd.pkl'
-        # test_file = f'./data/sts/{data_source}/test_tknsd1.pkl' # './data/sts/both_test_tknsd.pkl'
 
-        # TEXT = data.Field(use_vocab=False)
-        # LABEL = data.LabelField(dtype=torch.float, use_vocab=False)
-        # train_ds, val_ds, test_ds = STSDataReader(train_file, test_file, test_file, TEXT, LABEL).read() # using test data for validation
-        # glove_embeddings = vocab.Vectors("glove.840B.300d.txt", './data/')
-        # TEXT.build_vocab(train_ds, vectors=glove_embeddings)
-
-        # if args.encoder_model.startswith('pool'):
-        #     encoder_args = [encoder_model.split('_')[1]] # pool_type
-        # elif args.encoder_model == 'lstm':
-        #     encoder_args = [EMB_DIM, 1, False, False, 'max'] # hidden_size, num_layers, bidirectional, fine_tune_we
-        # elif args.encoder_model == "pass":
-        #     encoder_args = []
-        # else:
-        #     print(f'there are no classes set up for encoder model "{args.encoder_model}"')
-        
-
-        # TRAINING STS USING INFERSENT
         # get all our pre-saved embeddings
         sick_train_encs = pickle.load(Path('./data/sts/sick/infersent_train_embeddings.pkl').open('rb'))
         sick_test_encs = pickle.load(Path('./data/sts/sick/infersent_test_embeddings.pkl').open('rb'))
@@ -534,7 +502,6 @@ if __name__ == "__main__":
         loss_func = nn.MSELoss()
         train_losses, val_losses, correlations = wrapper.train(loss_func, opt_func)
         assert(False)
-
     
         if args.subtask == "train":
             train_di, val_di, test_di = get_sts_data_iterators(train_ds, val_ds, test_ds, (BS,BS,BS))
@@ -547,63 +514,3 @@ if __name__ == "__main__":
             wrapper = STSWrapper(args.model_name,saved_models_path,EMB_DIM,TEXT.vocab,args.encoder_model,args.predictor_model,train_di,val_di,test_di,layers,drops,*encoder_args)
             p,s = wrapper.test_correlation(load=True)
             print(f'pearson: {round(p[0],3)}, spearman: {round(s[0],3)}')
-
-
-
-
-
-
-    elif args.task == "worst_predictions":
-        predictor = STSWrapper(args.model_name, args.saved_models, embedding_dim, train_di, test_di, args.encoder_model, layers=layers, drops=drops)
-        worst_predictions(predictor, test_data_raw, k=10)
-
-    elif args.task == "nearest_neighbours":
-        encoder = create_encoder(embedding_dim, args.encoder_model)
-        encoder.load_state_dict(torch.load(f'{args.saved_models}/{args.model_name}_encoder.pt'))
-        encoder.eval()
-        s1 = "A woman is slicing potatoes"
-        s2 = "Two men are playing guitar"
-        s3 = "A boy is waving at some young runners from the ocean"
-        nearest_neighbours(encoder, test_di, test_data_raw, [s1, s2, s3], k=20)
-
-    elif args.task == "visualise_encoding":
-        encoder = create_encoder(embedding_dim, args.encoder_model)
-        encoder.load_state_dict(torch.load(f'{args.saved_models}/{args.model_name}_encoder.pt'))
-        encoder.eval()
-        encoder.evaluate = True
-        s1, s2, _ = test_data_raw[381]
-        st1, st2, _ = test_di.data[381]
-        if args.encoder_model == "pos_lin":
-            create_pos_lin_visualisations('./visualisations/s5_pos_lin', s1, st1, encoder)
-            create_pos_lin_visualisations('./visualisations/s6_pos_lin', s2, st2, encoder)
-        elif args.encoder_model == "pos_tree":
-            create_pos_tree_visualisations('./visualisations/s5_pos_tree', s1, st1, encoder)
-            create_pos_tree_visualisations('./visualisations/s6_pos_tree', s2, st2, encoder)
-
-
-    # elif args.task == "test_sst":
-    #     train_data = f'./data/sst/train_data_{args.word_embedding}_og.pkl'
-    #     test_data = f'./data/sst/test_data_{args.word_embedding}_og.pkl's
-    #     loss_func = nn.CrossEntropyLoss()
-    #     layers = [embedding_dim, 500, 5]
-    #     drops = [0, 0]
-    #     encoder = create_encoder(embedding_dim, args.encoder_model)
-    #     classifier = DownstreamWrapper(args.model_name, args.saved_models, "sst_classification", train_data, test_data, encoder, layers, drops)
-    #     opt_func = torch.optim.Adagrad(classifier.model.parameters(), lr=args.lr, weight_decay=0)
-    #     classifier.train(loss_func, opt_func, 15)
-    #     classifier.save()
-    #     print(classifier.test_accuracy())
-
-    # elif args.task.startswith("probe"):
-    #     probing_task = args.task.split("_", 1)[1]
-    #     train_data = f'./data/senteval_probing/{probing_task}_train_tree.pkl'
-    #     test_data = f'./data/senteval_probing/{probing_task}_test_tree.pkl'
-    #     loss_func = nn.CrossEntropyLoss()
-    #     layers = [embedding_dim, 200, 6]
-    #     drops = [0, 0]
-    #     encoder = create_encoder(embedding_dim, args.encoder_model)
-    #     wrapper = ProbingWrapper(args.model_name, args.saved_models, probing_task, train_data, test_data, encoder, layers, drops)
-    #     opt_func = torch.optim.SGD(wrapper.model.parameters(), lr=args.lr, weight_decay=0)
-    #     wrapper.train(loss_func, opt_func, 10)
-    #     wrapper.save()
-    #     print(wrapper.test_accuracy())
