@@ -12,8 +12,8 @@ from modules.utilities.imports_torch import *
 
 from .eda import eda_corpus
 from .encode import encode_data_with_pretrained
-from .lp import LabelProp
-from .kmeans import kmeans
+from .lp import LabelProp, sigma_fit
+from .kmeans import kmeans, recursive_kmeans
 from .knn import knn_classify
 
 __all__ = ['repeat_augment_and_train']
@@ -41,6 +41,14 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
     class_accs, aug_accs, aug_fracs = [], [], []
     ps, rs, fs = [], [], []
 
+    # FOR ENTROPY HEURISTIC
+    # mst_sigmas, entropies, sigmas, accs, fracs = [], [], [], [], []
+
+    # # ABLATION STUDY
+    # sigmas, f1_means, f1_stds, aug_acc_means, aug_acc_stds, frac_used_means, frac_used_stds = [],[],[],[],[],[],[]
+    # for sigma in np.arange(0.035, 0.155, 0.005):
+    #     sigmas.append(sigma)
+
     for i in tqdm(range(k), total=k):
         examples = train_ds.examples
         np.random.shuffle(examples)
@@ -65,6 +73,164 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
                     break
                 np.random.shuffle(examples)
 
+        ##################################################################################################################
+        # PROPAGATION PROCESS VISUALISATION (FOR DEMO)
+        # from matplotlib import pyplot as plt
+        # from pandas import DataFrame
+        # from sklearn.decomposition import PCA
+        # from sklearn.manifold import TSNE
+        # import matplotlib.transforms as transforms
+
+        # # EXTRACT DATA & COMPUTE DIM_REDUCED EMBEDDINGS
+        # pickle.dump(labeled_examples, Path(f'./paper/{frac}_labeled_egs.pkl').open('wb'))
+        # pickle.dump(unlabeled_examples, Path(f'./paper/{frac}_unlabeled_egs.pkl').open('wb'))
+        # labeled_examples = pickle.load(Path(f'./paper/{frac}_labeled_egs.pkl').open('rb'))
+        # unlabeled_examples = pickle.load(Path(f'./paper/{frac}_unlabeled_egs.pkl').open('rb'))
+        # intents = pickle.load(Path(f'./data/ic/{data_source}/intents.pkl').open('rb'))
+        # res = encode_data_with_pretrained(data_source, train_ds, test_ds, text_field, encoder_model, labeled_examples, unlabeled_examples)
+        # x_l, y_l, x_u, y_u, _ = res
+        # X = np.concatenate([x_l, x_u])
+        # Y = np.concatenate([y_l, y_u])
+        # pca = PCA(n_components=100)
+        # pca_res = pca.fit_transform(X)
+        # tsne = TSNE(n_components=2, verbose=0, perplexity=30, n_iter=1000)
+        # tsne_pca_res = tsne.fit_transform(pca_res)
+        # ts1, ts2 = tsne_pca_res[:,0], tsne_pca_res[:,1]
+        # df_tsne_pca = DataFrame([{
+        #     'intent': intents[y],
+        #     'x-tsne-pca': t1,
+        #     'y-tsne-pca': t2,
+        #     'og_idx': idx
+        # } for idx, (y,t1,t2) in enumerate(zip(Y,ts1,ts2))])
+        # df_tsne_pca.to_pickle(f'./paper/{frac}_dataframe.pkl')
+        # df_tsne_pca = pd.read_pickle(f'./paper/{frac}_dataframe.pkl')
+
+        # # PLOT INITIAL DATASET
+        # fig, ax = plt.subplots()
+        # n_l = len(labeled_examples)
+        # for idx, intent in enumerate(set(df_tsne_pca['intent'].values)):
+        #     values = [v for v in df_tsne_pca.loc[df_tsne_pca['intent']==intent].drop(columns=['intent']).values]
+        #     for i, v in enumerate(values):
+        #         if v[0] < n_l:
+        #             ax.scatter(v[1], v[2], color=f'C{idx}', s=100, alpha=1, label=intent)
+        #         else:
+        #             ax.scatter(v[1], v[2], color='black', s=100, alpha=0.2)
+        # title = 'propagation_initial_labeled_only'
+        # for idx, intent in enumerate(set(df_tsne_pca['intent'].values)):
+        #     values = [v for v in df_tsne_pca.loc[df_tsne_pca['intent']==intent].drop(columns=['intent']).values]
+        #     ax.scatter([v[1] for v in values], [v[2] for v in values], color=f'C{idx}', s=100, alpha=1, label=intent)
+        # title = 'propagation_initial_all'
+        # ax.grid(b=False)
+        # ax.set_ylim(-7.6, 12.5)
+        # ax.set_xlim(-10.5, 5.2)
+        # fig.set_size_inches(15, 10)
+        # plt.legend(loc='lower right', frameon=True, fancybox=True, shadow=True, fontsize='large')
+        # plt.savefig(f'./paper/{title}.pdf', format='pdf', dpi=100)
+        # plt.show()
+        # assert(False)
+        
+        # # PRELIMINARY DATA FOR MAIN PLOT
+        # dim_reduced_points = [0 for _ in range(100)]
+        # for idx, intent in enumerate(set(df_tsne_pca['intent'].values)):
+        #     values = [v for v in df_tsne_pca.loc[df_tsne_pca['intent']==intent].drop(columns=['intent']).values]
+        #     for v in values:
+        #         dim_reduced_points[int(v[0])] = (v[1:],intent)
+        # data = pickle.load(Path('./paper/propagation_data.pkl').open('rb'))
+        # indices = pickle.load(Path('./paper/indices_data.pkl').open('rb'))
+        # classifications = pickle.load(Path('./paper/classifications_data.pkl').open('rb'))
+        # colors = {'findconnection': 'C1', 'departuretime': 'C0'}
+        # intent_map = {0: 'findconnection', 1: 'departuretime'}
+        # classified_indices = [0, 1]
+        # classified_true_labels = ['findconnection', 'departuretime']
+        # classified_intents = ['findconnection', 'departuretime']
+        # classified_xs = [dim_reduced_points[i][0][0] for i in classified_indices]
+        # classified_ys = [dim_reduced_points[i][0][1] for i in classified_indices]
+
+        # # PLOT EACH RECURSION & PROPAGATION ITERATION
+        # with plt.style.context('seaborn-whitegrid'):
+        #     plt.rcParams['font.family'] = 'serif'
+        #     plt.rcParams['mathtext.fontset'] = 'dejavuserif'
+
+        #     # starting point plot
+        #     title = '0_final'
+        #     fig, ax = plt.subplots()
+        #     unclassified_indices = [i for i in range(100) if i not in classified_indices]
+        #     unclassified_xs = [dim_reduced_points[i][0][0] for i in unclassified_indices]
+        #     unclassified_ys = [dim_reduced_points[i][0][1] for i in unclassified_indices]
+        #     ax.scatter(unclassified_xs, unclassified_ys, color='black', s=100, alpha=0.2)
+        #     ax.scatter(classified_xs[1], classified_ys[1], color=colors[classified_intents[1]], marker='s', s=200, alpha=1, label=classified_intents[1])
+        #     ax.scatter(classified_xs[0], classified_ys[0], color=colors[classified_intents[0]], marker='s', s=200, alpha=1, label=classified_intents[0])
+        #     ax.text(2, 10, 'Recursion 0 -- complete', fontsize=15, color='black', ha="center", va="center")
+        #     ax.grid(b=False)
+        #     ax.set_ylim(-7.6, 12.5)
+        #     ax.set_xlim(-10.5, 5.2)
+        #     fig.set_size_inches(15, 10)
+        #     plt.legend(loc='lower right', frameon=True, fancybox=True, shadow=True, fontsize='large')
+        #     plt.savefig(f'./paper/prop_plots_2/{title}.png', format='png', dpi=150)
+        #     plt.close()
+
+        #     for recursion_idx, prop_data in tqdm(enumerate(data), total=len(data)):
+        #         # plot results during propagation
+        #         Y_us = [prop_data[0]] if len(prop_data) == 1 else np.array(prop_data)[range(0, len(prop_data), 100)]
+        #         for prop_idx, Y_u in enumerate(Y_us):
+        #             title = f'{recursion_idx+1}_{(prop_idx+1)*100}'
+        #             fig, ax = plt.subplots()
+        #             for idx, row in enumerate(Y_u):
+        #                 color = colors[intent_map[np.argmax(row)]]
+        #                 prob = np.max(row)
+        #                 ax.scatter(unclassified_xs[idx], unclassified_ys[idx], color=color, s=100, alpha=prob*0.75)
+        #             for (x, y, intent, true_label) in zip(classified_xs[2:], classified_ys[2:], classified_intents[2:], classified_true_labels[2:]):
+        #                 ax.scatter(x, y, color=colors[intent], marker='s', s=100, alpha=1)
+        #                 if intent != true_label:
+        #                     ax.scatter(x, y, color='black', marker='x', s=150, alpha=1)
+        #             ax.scatter(classified_xs[1], classified_ys[1], color=colors[classified_intents[1]], marker='s', s=200, alpha=1, label=classified_intents[1])
+        #             ax.scatter(classified_xs[0], classified_ys[0], color=colors[classified_intents[0]], marker='s', s=200, alpha=1, label=classified_intents[0])
+        #             ax.text(2, 10, f'Recursion {recursion_idx+1} -- iterating...', fontsize=15, color='black', ha="center", va="center")
+        #             ax.grid(b=False)
+        #             ax.set_ylim(-7.6, 12.5)
+        #             ax.set_xlim(-10.5, 5.2)
+        #             fig.set_size_inches(15, 10)
+        #             plt.legend(loc='lower right', frameon=True, fancybox=True, shadow=True, fontsize='large')
+        #             plt.savefig(f'./paper/prop_plots_2/{title}.png', format='png', dpi=150)
+        #             plt.close()
+                
+        #         # plot the end result of each recursion - i.e. new ground truth classifications
+        #         classified_indices += [i + 2 for i in indices[recursion_idx]]
+        #         classified_xs = [dim_reduced_points[i][0][0] for i in classified_indices]
+        #         classified_ys = [dim_reduced_points[i][0][1] for i in classified_indices]
+        #         classified_true_labels = [dim_reduced_points[i][1] for i in classified_indices]
+        #         classified_intents += [intent_map[intent_class] for intent_class in classifications[recursion_idx]]
+        #         unclassified_indices = [i for i in range(100) if i not in classified_indices]
+        #         unclassified_xs = [dim_reduced_points[i][0][0] for i in unclassified_indices]
+        #         unclassified_ys = [dim_reduced_points[i][0][1] for i in unclassified_indices]
+        #         title = f'{recursion_idx+1}_final'
+        #         fig, ax = plt.subplots()
+        #         ax.scatter(unclassified_xs, unclassified_ys, color='black', s=100, alpha=0.2)
+        #         for (x, y, intent, true_label) in zip(classified_xs[2:], classified_ys[2:], classified_intents[2:], classified_true_labels[2:]):
+        #             ax.scatter(x, y, color=colors[intent], marker='s', s=100, alpha=1)
+        #             if intent != true_label:
+        #                 ax.scatter(x, y, color='black', marker='x', s=150, alpha=1)
+        #         ax.scatter(classified_xs[1], classified_ys[1], color=colors[classified_intents[1]], marker='s', s=200, alpha=1, label=classified_intents[1])
+        #         ax.scatter(classified_xs[0], classified_ys[0], color=colors[classified_intents[0]], marker='s', s=200, alpha=1, label=classified_intents[0])
+        #         ax.text(2, 10, f'Recursion {recursion_idx+1} -- complete', fontsize=15, color='black', ha="center", va="center")
+        #         ax.grid(b=False)
+        #         ax.set_ylim(-7.6, 12.5)
+        #         ax.set_xlim(-10.5, 5.2)
+        #         fig.set_size_inches(15, 10)
+        #         plt.legend(loc='lower right', frameon=True, fancybox=True, shadow=True, fontsize='large')
+        #         plt.savefig(f'./paper/prop_plots_2/{title}.png', format='png', dpi=150)
+        #         plt.close()
+    
+        # assert(False)
+        ##################################################################################################################
+
+        # # ENTROPY HEURISTIC
+        # res = encode_data_with_pretrained(data_source, train_ds, test_ds, text_field, encoder_model, labeled_examples, unlabeled_examples)
+        # x_l, y_l, x_u, y_u, _ = res
+        # mst_sigma, entropy, sigma, acc, frac_used = sigma_fit(x_l, y_l, x_u, y_u, num_classes, data_source)
+        # mst_sigmas.append(mst_sigma); entropies.append(entropy); sigmas.append(sigma); accs.append(acc); fracs.append(frac_used)
+        # continue
+
         if aug_algo == "eda":
             x_l, y_l = [eg.x for eg in labeled_examples], [eg.y for eg in labeled_examples]
             augmented_x_l, augmented_y_l = eda_corpus(x_l, y_l)
@@ -78,7 +244,7 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
             sf_thresh = 0.7
             augmented_train_examples, aug_acc, frac_used = self_feed(data_source, dir_to_save, iter_func, model_wrapper, labeled_examples, unlabeled_examples, val_ds, test_ds, text_field, label_field, classifier_params, thresh=sf_thresh)
         else:
-            augmented_train_examples, aug_acc, frac_used = augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, test_ds, text_field, label_field, num_classes)
+            augmented_train_examples, aug_acc, frac_used = augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, test_ds, text_field, label_field, num_classes, sigma=None)
         
         aug_accs.append(aug_acc); aug_fracs.append(frac_used)
         new_train_ds = data.Dataset(augmented_train_examples, {'x': text_field, 'y': label_field})
@@ -96,6 +262,21 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
         
         class_accs.append(acc); ps.append(p); rs.append(r); fs.append(f)
 
+    # # ENTROPY HEURISTIC
+    # print(np.mean(entropies), np.std(entropies))
+    # print(np.mean(mst_sigmas), np.std(mst_sigmas))
+    # print(np.mean(sigmas), np.std(sigmas))
+    # print(np.mean(accs), np.std(accs))
+    # print(np.mean(fracs), np.std(fracs))
+    # assert(False)
+
+    # # ABLATION STUDY
+    # print(f"SIGMA: {sigma}")
+    # f1_means.append(np.mean(class_accs)); f1_stds.append(np.std(class_accs))
+    # aug_acc_means.append(np.mean(aug_accs)); aug_acc_stds.append(np.std(aug_accs))
+    # frac_used_means.append(np.mean(aug_fracs)); frac_used_stds.append(np.std(aug_fracs))
+    # assert(False)
+
     print(f"FRAC '{frac}' Results Below:")
     print(f'classification acc --> mean: {np.mean(class_accs)}; std: {np.std(class_accs)}')
     print(f'augmentation acc --> mean: {np.mean(aug_accs)}; std: {np.std(aug_accs)}\t (average frac used: {np.mean(aug_fracs)})')
@@ -106,55 +287,64 @@ def repeat_augment_and_train(dir_to_save, iter_func, model_wrapper, data_source,
     aug_acc_mean, aug_acc_std, aug_frac_mean = np.mean(aug_accs), np.std(aug_accs), np.mean(aug_fracs)
     p_mean, r_mean, f_mean = np.mean(ps), np.mean(rs), np.mean(fs)
     p_std, r_std, f_std = np.std(ps), np.std(rs), np.std(fs)
+    
+    # # ABLATION STUDY
+    # print([round(s, 3) for s in sigmas])
+    # print(f1_means)
+    # print(f1_stds)
+    # print(aug_acc_means)
+    # print(aug_acc_stds)
+    # print(frac_used_means)
+    # print(frac_used_stds)
+    # assert(False)
 
     return class_acc_mean, class_acc_std, aug_acc_mean, aug_acc_std, aug_frac_mean, p_mean, p_std, r_mean, r_std, f_mean, f_std
 
 
-def augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, test_ds, text_field, label_field, num_classes):
+def augment(data_source, aug_algo, encoder_model, sim_measure, labeled_examples, unlabeled_examples, train_ds, test_ds, text_field, label_field, num_classes, sigma=None):
     res = encode_data_with_pretrained(data_source, train_ds, test_ds, text_field, encoder_model, labeled_examples, unlabeled_examples)
-    xs_l, ys_l, xs_u, ys_u, xs_u_unencoded = res
+    x_l, y_l, x_u, y_u, xs_u_unencoded = res
 
     if aug_algo.startswith("knn"):
         algo_version = aug_algo.split('_')[1]
         if algo_version == 'base':
-            classifications, indices = knn_classify(xs_l, ys_l, xs_u, n=1, weights='uniform')
+            classifications, indices = knn_classify(x_l, y_l, x_u, n=1, weights='uniform')
             frac_used = 1
         elif algo_version == 'threshold':
-            classifications, indices = knn_classify(xs_l, ys_l, xs_u, n=2, threshold=0.99)
-            ys_u = ys_u[indices]
+            classifications, indices = knn_classify(x_l, y_l, x_u, n=2, threshold=0.99)
+            y_u = y_u[indices]
             xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
-            frac_used = float(len(xs_u_unencoded)/len(xs_u))
-    elif aug_algo == "kmeans":
-        classifications = kmeans(xs_l, xs_u, ys_l, n_clusters=num_classes)
+            frac_used = float(len(xs_u_unencoded)/len(x_u))
+    elif aug_algo.startswith("kmeans"):
+        algo_version = aug_algo.split('_')[1]
+        if algo_version == "base":
+            classifications = kmeans(x_l, x_u, y_l, n_clusters=num_classes)
+        elif algo_version == "recursive":
+            classifications = recursive_kmeans(x_l, x_u, y_l, n_clusters=num_classes)
         frac_used = 1
     elif aug_algo.startswith("lp"):
         algo_version = aug_algo.split('_')[1]
-        display = True if data_source == "trec" else False
-        lp = LabelProp(xs_l, ys_l, xs_u, ys_u, num_classes, data_source=data_source, display=display)
+        lp = LabelProp(x_l, y_l, x_u, y_u, num_classes, data_source=data_source, sigma=sigma)
         if algo_version == 'base':
             lp.propagate()
             classifications, indices = lp.classify(threshold=False)
-            ys_u = ys_u[indices]
+            y_u = y_u[indices]
             xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
-            frac_used = float(len(xs_u_unencoded)/len(xs_u))
+            frac_used = float(len(xs_u_unencoded)/len(x_u))
         elif algo_version == "threshold":
             lp.propagate()
             classifications, indices = lp.classify(threshold=True)
-            ys_u = ys_u[indices]
+            y_u = y_u[indices]
             xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
-            frac_used = float(len(xs_u_unencoded)/len(xs_u))
+            frac_used = float(len(xs_u_unencoded)/len(x_u))
         elif algo_version == "recursive":
-            classifications, indices = lp.recursive(xs_l, ys_l, xs_u, ys_u)
-            ys_u = ys_u[indices]
+            classifications, indices = lp.recursive(x_l, y_l, x_u, y_u)
+            y_u = y_u[indices]
             xs_u_unencoded = [xs_u_unencoded[idx] for idx in indices]
-            frac_used = float(len(xs_u_unencoded)/len(xs_u))
-        elif algo_version == "p1nn":
-            classifications, indices = lp.p1nn(xs_l, ys_l, xs_u)
-            frac_used = 1
+            frac_used = float(len(xs_u_unencoded)/len(x_u))
     
-    num_correct = np.sum(classifications == ys_u)
+    num_correct = np.sum(classifications == y_u)
     aug_acc = 0 if len(classifications) == 0 else float(num_correct/len(classifications))
-        
     new_labeled_data = [{'x': x, 'y': classifications[i]} for i, x in enumerate(xs_u_unencoded)]
     example_fields = {'x': ('x', text_field), 'y': ('y', label_field)}
     new_examples = [Example.fromdict(x, example_fields) for x in new_labeled_data]
