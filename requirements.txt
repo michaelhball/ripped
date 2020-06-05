@@ -22,7 +22,7 @@ cytoolz==0.9.0.1
 decorator==4.3.0
 Deprecated==1.2.4
 dill==0.2.9
-Django==2.2.4
+Django==2.2.13
 django-extensions==2.1.2
 djangorestframework==3.10.2
 docutils==0.14
