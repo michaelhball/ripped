@@ -98,7 +98,7 @@ protobuf==3.9.1
 ptyprocess==0.5.2
 pycparser==2.18
 pygame==1.9.3
-Pygments==2.2.0
+Pygments==2.7.4
 pylint==2.0.1
 pymongo==3.7.2
 pymunk==5.3.2
