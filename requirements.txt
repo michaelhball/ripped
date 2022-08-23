@@ -5,7 +5,7 @@ Keras-Applications==1.0.8
 Keras-Preprocessing==1.1.0
 matplotlib==3.0.2
 msgpack-numpy==0.4.3.2
-nbconvert==5.3.1
+nbconvert==6.5.1
 nltk==3.4.5
 notebook==6.1.5
 numpy==1.16.0
